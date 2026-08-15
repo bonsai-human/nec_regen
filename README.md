@@ -19,12 +19,28 @@
 ## ドキュメント
 
 - [実装計画書](docs/implementation-plan.md) — 仕様・アーキテクチャ・開発フェーズ
+- [仕様の食い違いと暫定の解釈](docs/spec-questions.md) — 実装で判断が必要だった点の記録
 - [使用素材とライセンス](docs/CREDITS.md)
 
 ## 現在のステータス
 
-**Phase 0（基盤構築）完了。** 空の Canvas が表示され、CI（型チェック / lint / テスト / ビルド）が通る状態。
-次は Phase 1（ヘクス座標系・型定義・JSON ローダ）。
+**Phase 1（コアモデル）完了。** 次は Phase 2（描画・カメラ・入力）。
+
+| Phase | 内容                                                        | 状態     |
+| ----- | ----------------------------------------------------------- | -------- |
+| 0     | 基盤構築（Vite / TS strict / Vitest / ESLint / CI / Pages） | 完了     |
+| 1     | ヘクス座標系、型定義、JSON ローダとスキーマ検証             | 完了     |
+| 2     | 描画・カメラ・入力                                          | これから |
+
+Phase 1 で入ったもの:
+
+- `src/core/hex.ts` — odd-q オフセット ⇔ 軸座標、距離、近隣、範囲、射程帯
+- `src/core/types.ts` — `GameState` / `Unit` / `UnitDef` / `TerrainDef` などの型定義
+- `src/core/map.ts` — 盤面（タイル配列）とルール解決用の静的データ
+- `src/data/` — JSON ローダとスキーマ検証（問題は1件目で止めずまとめて報告する）
+- `data/units.json` — 全28種の能力値（実装計画書 第5.1.1章の較正済みデータ）
+- `data/terrain.json` — 全17種の地形コストと地形効果
+- `data/maps/map01_crossroads.json` — 21×14 の陸戦マップ
 
 ## 開発
 

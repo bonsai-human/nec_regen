@@ -1,0 +1,121 @@
+[
+  {
+    "id": "road",
+    "name": "道路",
+    "tier": 0,
+    "moveCost": { "foot": 1, "track": 1, "wheel": 1, "air": 1, "ship": null, "sub": null },
+    "defense": 1.0
+  },
+  {
+    "id": "bridge",
+    "name": "橋",
+    "tier": 0,
+    "moveCost": { "foot": 1, "track": 1, "wheel": 1, "air": 1, "ship": null, "sub": null },
+    "defense": 1.0
+  },
+  {
+    "id": "factory",
+    "name": "工場",
+    "tier": 0,
+    "moveCost": { "foot": 1, "track": 1, "wheel": 1, "air": 1, "ship": null, "sub": null },
+    "defense": 1.0
+  },
+  {
+    "id": "hq",
+    "name": "司令部",
+    "tier": 0,
+    "moveCost": { "foot": 1, "track": 1, "wheel": 1, "air": 1, "ship": null, "sub": null },
+    "defense": 1.0
+  },
+  {
+    "id": "port",
+    "name": "港",
+    "tier": 0,
+    "moveCost": { "foot": 1, "track": 1, "wheel": 1, "air": 1, "ship": 1, "sub": null },
+    "defense": 1.0
+  },
+  {
+    "id": "airfield",
+    "name": "飛行場",
+    "tier": 0,
+    "moveCost": { "foot": 1, "track": 1, "wheel": 1, "air": 1, "ship": null, "sub": null },
+    "defense": 1.0
+  },
+  {
+    "id": "plain",
+    "name": "平地",
+    "tier": 1,
+    "moveCost": { "foot": 1, "track": 1, "wheel": 2, "air": 1, "ship": null, "sub": null },
+    "defense": 1.1
+  },
+  {
+    "id": "beach",
+    "name": "砂浜",
+    "tier": 1,
+    "moveCost": { "foot": 1, "track": 1, "wheel": 2, "air": 1, "ship": null, "sub": null },
+    "defense": 1.1
+  },
+  {
+    "id": "hill",
+    "name": "丘陵",
+    "tier": 2,
+    "moveCost": { "foot": 1, "track": 2, "wheel": 3, "air": 1, "ship": null, "sub": null },
+    "defense": 1.2
+  },
+  {
+    "id": "forest",
+    "name": "森林",
+    "tier": 2,
+    "moveCost": { "foot": 1, "track": 2, "wheel": 3, "air": 1, "ship": null, "sub": null },
+    "defense": 1.2
+  },
+  {
+    "id": "city",
+    "name": "市街地",
+    "tier": 2,
+    "moveCost": { "foot": 1, "track": 2, "wheel": 3, "air": 1, "ship": null, "sub": null },
+    "defense": 1.2
+  },
+  {
+    "id": "badlands",
+    "name": "荒地",
+    "tier": 3,
+    "moveCost": { "foot": 2, "track": 3, "wheel": null, "air": 1, "ship": null, "sub": null },
+    "defense": 1.3
+  },
+  {
+    "id": "swamp",
+    "name": "湿地",
+    "tier": 3,
+    "moveCost": { "foot": 2, "track": 3, "wheel": null, "air": 1, "ship": null, "sub": null },
+    "defense": 1.3
+  },
+  {
+    "id": "mountain",
+    "name": "山岳",
+    "tier": 4,
+    "moveCost": { "foot": 2, "track": null, "wheel": null, "air": 1, "ship": null, "sub": null },
+    "defense": 1.4
+  },
+  {
+    "id": "river",
+    "name": "河川",
+    "tier": 5,
+    "moveCost": { "foot": 2, "track": 4, "wheel": null, "air": 1, "ship": 1, "sub": null },
+    "defense": 1.0
+  },
+  {
+    "id": "shallows",
+    "name": "浅瀬",
+    "tier": 5,
+    "moveCost": { "foot": 2, "track": 4, "wheel": null, "air": 1, "ship": 1, "sub": null },
+    "defense": 1.0
+  },
+  {
+    "id": "sea",
+    "name": "外洋",
+    "tier": 5,
+    "moveCost": { "foot": null, "track": null, "wheel": null, "air": 1, "ship": 1, "sub": 1 },
+    "defense": 1.0
+  }
+]
