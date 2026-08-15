@@ -1,0 +1,100 @@
+/* レスポンシブの骨格のみ。パネル類は Phase 2 以降で追加する。 */
+
+:root {
+  --bg: #0e1116;
+  --bar-bg: #161b22;
+  --fg: #d6dae0;
+  --fg-dim: #7d8590;
+  --bar-h: 44px;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--fg);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Hiragino Kaku Gothic ProN',
+    'Noto Sans JP',
+    sans-serif;
+  /* タッチ操作のダブルタップズーム等を抑止（Phase 2 の入力層の前提） */
+  touch-action: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
+
+.app__bar {
+  flex: 0 0 auto;
+  height: var(--bar-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
+  background: var(--bar-bg);
+  border-bottom: 1px solid #21262d;
+  font-size: 13px;
+  user-select: none;
+}
+
+.app__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app__phase {
+  flex: 0 0 auto;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+/* 幅の狭い端末では副次情報を落として盤面の情報を優先する */
+@media (max-width: 420px) {
+  .app__phase {
+    display: none;
+  }
+}
+
+.app__stage {
+  flex: 1 1 auto;
+  position: relative;
+  min-height: 0;
+}
+
+.app__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* 横向きスマートフォンではバーを詰めて盤面を広く取る */
+@media (max-height: 480px) {
+  :root {
+    --bar-h: 34px;
+  }
+
+  .app__bar {
+    font-size: 12px;
+  }
+}

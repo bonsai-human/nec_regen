@@ -19,7 +19,43 @@
 ## ドキュメント
 
 - [実装計画書](docs/implementation-plan.md) — 仕様・アーキテクチャ・開発フェーズ
+- [使用素材とライセンス](docs/CREDITS.md)
 
 ## 現在のステータス
 
-実装計画書のレビュー段階。コードの実装はこれから。
+**Phase 0（基盤構築）完了。** 空の Canvas が表示され、CI（型チェック / lint / テスト / ビルド）が通る状態。
+次は Phase 1（ヘクス座標系・型定義・JSON ローダ）。
+
+## 開発
+
+必要環境: Node.js 22 以上。
+
+```bash
+npm install
+npm run dev        # 開発サーバ（http://localhost:5173）
+```
+
+| コマンド            | 内容                                         |
+| ------------------- | -------------------------------------------- |
+| `npm run dev`       | Vite 開発サーバを起動                        |
+| `npm run build`     | 型チェック＋本番ビルド（`dist/`）            |
+| `npm run preview`   | ビルド成果物をローカルで確認                 |
+| `npm run typecheck` | `tsc --noEmit`                               |
+| `npm run lint`      | ESLint                                       |
+| `npm run format`    | Prettier で整形（`format:check` は検査のみ） |
+| `npm test`          | Vitest（`test:watch` は監視実行）            |
+| `npm run ci`        | CI と同じ一連の検証をローカルで実行          |
+
+### 決定性の担保
+
+本作は乱数を一切使わない（実装計画書 第1.1章）。これを規約ではなく仕組みで守るため、
+ESLint で次を禁止している。破ると CI が落ちる。
+
+- `Math.random` — プロジェクト全体で禁止
+- `Date.now` / `performance.now` / `new Date()` / `crypto.getRandomValues` — `src/core` と `src/ai` で禁止
+- レイヤをまたぐ import — `core` は他レイヤを参照不可、`ai` は `core` のみ、`render`/`input` は `ui` を参照不可
+
+### 配信
+
+`main` への push で GitHub Actions が GitHub Pages へ自動デプロイする
+（リポジトリ設定の Pages → Source を「GitHub Actions」にしておく必要がある）。
