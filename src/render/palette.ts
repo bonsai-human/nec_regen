@@ -24,6 +24,12 @@ export const COLORS = {
   /** ダメージ予測を出している目標の枠。 */
   focus: '#ffd479',
   facilityNeutral: '#c9ccd1',
+  /** 地形効果の目印。 */
+  terrainPip: 'rgba(255, 255, 255, 0.55)',
+  /** 施設の増援カウントダウン。 */
+  badgeBg: '#12171e',
+  /** ユニットのシルエット。 */
+  unitIcon: '#f4f6f8',
   text: '#e6e9ee',
   textDim: '#9aa2ad',
 } as const;

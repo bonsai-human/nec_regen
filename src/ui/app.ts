@@ -14,13 +14,19 @@ import { attackableTargets, forecastCombat, type CombatForecast } from '@/core/c
 import { captureBlockedReason, facilityAt } from '@/core/facility';
 import { hexEquals, hexKey, toOffset, type Hex, type HexKey } from '@/core/hex';
 import { terrainIdAt, unitDef, type GameData } from '@/core/map';
-import { reachableHexes, unitAt, type ReachableMap } from '@/core/movement';
-import { reduce } from '@/core/reducer';
+import { moveCostFor, reachableHexes, unitAt, type ReachableMap } from '@/core/movement';
+import { reduce, type GameEvent } from '@/core/reducer';
 import { createInitialState } from '@/core/state';
 import type { FactionId, GameState, Unit, UnitId } from '@/core/types';
 import { PointerGestures, type GesturePoint } from '@/input/pointer';
-import { drawBoard, type RenderScene, type RenderUnit } from '@/render/board-renderer';
+import {
+  drawBoard,
+  type RenderFlash,
+  type RenderScene,
+  type RenderUnit,
+} from '@/render/board-renderer';
 import { Camera } from '@/render/camera';
+import { unitLabel } from '@/render/palette';
 import { boardBounds, worldToHex } from '@/render/hex-layout';
 import { CanvasSurface } from '@/render/surface';
 
@@ -28,7 +34,9 @@ const WHEEL_ZOOM_STEP = 1.12;
 const BUTTON_ZOOM_STEP = 1.25;
 const KEY_PAN_STEP = 64;
 /** AI の手を1つずつ見せる間隔（ミリ秒）。何が起きたか追えるようにする。 */
-const AI_STEP_MS = 220;
+const AI_STEP_MS = 260;
+/** ダメージ表示が消えるまでの時間（ミリ秒）。 */
+const FLASH_MS = 1100;
 
 /** プレイヤーが操作する陣営。残りは AI が担当する（1人用・第0章）。 */
 const HUMAN_FACTION: FactionId = 'red';
@@ -40,6 +48,7 @@ export interface AppElements {
   readonly turnLabel: HTMLElement;
   readonly confirm: HTMLButtonElement;
   readonly cancel: HTMLButtonElement;
+  readonly undo: HTMLButtonElement;
   readonly capture: HTMLButtonElement;
   readonly wait: HTMLButtonElement;
   readonly endTurn: HTMLButtonElement;
@@ -73,6 +82,12 @@ export class App {
   private hovered: Hex | null = null;
   private frame: number | null = null;
   private aiTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 自ターン内のアンドゥ用スナップショット（第7.2章）。手番が移ると捨てる。 */
+  private history: GameState[] = [];
+  /** 直近の出来事の一時表示。 */
+  private flashes: { hex: Hex; text: string; color: string; born: number }[] = [];
+  /** 直近の戦闘結果などの文章。 */
+  private lastReport = '';
   private readonly disposers: (() => void)[] = [];
 
   constructor(
@@ -279,10 +294,110 @@ export class App {
       this.elements.readout.textContent = error;
       return false;
     }
-    this.state = reduce(this.data, this.state, command).state;
+
+    // アンドゥのためのスナップショット。ターン終了で捨てる
+    if (command.type !== 'endTurn') this.history.push(this.state);
+
+    const result = reduce(this.data, this.state, command);
+    this.state = result.state;
+    this.report(result.events);
     this.updatePanel();
     this.requestRender();
     return true;
+  }
+
+  /**
+   * 起きたことを画面に出す（第7.5章）。
+   * core が返すイベントをそのまま文章と一時表示に変える。
+   */
+  private report(events: readonly GameEvent[]): void {
+    const lines: string[] = [];
+    for (const event of events) {
+      switch (event.type) {
+        case 'unitsFought': {
+          const attacker = this.unitName(event.attackerId);
+          const defender = this.unitName(event.defenderId);
+          lines.push(
+            `${attacker} → ${defender}: ${event.damageToDefender} ダメージ（返し ${event.damageToAttacker}）`,
+          );
+          const defenderHex = this.hexOf(event.defenderId);
+          if (defenderHex !== null) {
+            this.pushFlash(defenderHex, `-${event.damageToDefender}`, '#ff8f7a');
+          }
+          const attackerHex = this.hexOf(event.attackerId);
+          if (attackerHex !== null && event.damageToAttacker > 0) {
+            this.pushFlash(attackerHex, `-${event.damageToAttacker}`, '#ffd479');
+          }
+          break;
+        }
+        case 'unitDestroyed':
+          lines.push('撃破');
+          this.pushFlash(event.hex, '撃破', '#ff6a5a');
+          break;
+        case 'unitRepaired':
+          lines.push('修理して全快');
+          this.pushFlash(event.hex, '全快', '#7ad18a');
+          break;
+        case 'facilityCaptured':
+          lines.push(`${this.facilityName(event.kind)}を占領`);
+          this.pushFlash(event.hex, '占領', '#9ec5ff');
+          break;
+        case 'reinforcementSpawned':
+          lines.push(`増援: ${unitDef(this.data, event.unitType).name}`);
+          this.pushFlash(event.hex, '増援', '#9ec5ff');
+          break;
+        case 'unitMoved':
+        case 'unitWaited':
+        case 'turnEnded':
+        case 'gameEnded':
+          // 盤面と手番表示で分かるので、文章にはしない
+          break;
+        default:
+          break;
+      }
+    }
+    if (lines.length > 0) this.lastReport = lines.join(' · ');
+  }
+
+  private pushFlash(hex: Hex, text: string, color: string): void {
+    this.flashes.push({ hex, text, color, born: performance.now() });
+  }
+
+  private unitName(unitId: UnitId): string {
+    const unit = this.state.units.find((item) => item.id === unitId);
+    return unit === undefined ? 'ユニット' : unitDef(this.data, unit.type).name;
+  }
+
+  private hexOf(unitId: UnitId): Hex | null {
+    return this.state.units.find((item) => item.id === unitId)?.hex ?? null;
+  }
+
+  private facilityName(kind: string): string {
+    switch (kind) {
+      case 'factory':
+        return '工場';
+      case 'hq':
+        return '司令部';
+      case 'port':
+        return '港';
+      case 'airfield':
+        return '飛行場';
+      default:
+        return '施設';
+    }
+  }
+
+  /** 自ターン内なら何手でも戻せる（第7.2章）。 */
+  private undo(): void {
+    if (this.isBusy()) return;
+    const previous = this.history.pop();
+    if (previous === undefined) return;
+    this.state = previous;
+    this.selection = null;
+    this.lastReport = '';
+    this.flashes = [];
+    this.updatePanel();
+    this.requestRender();
   }
 
   private captureHere(): void {
@@ -300,6 +415,8 @@ export class App {
   private endTurn(): void {
     if (this.isBusy()) return;
     if (!this.dispatch({ type: 'endTurn' })) return;
+    // 相手の手番を挟むと巻き戻せなくなる（第7.2章）
+    this.history = [];
     this.clearSelection();
     this.runAiTurns();
   }
@@ -324,7 +441,9 @@ export class App {
         return;
       }
       if (validateCommand(this.data, this.state, command) === null) {
-        this.state = reduce(this.data, this.state, command).state;
+        const result = reduce(this.data, this.state, command);
+        this.state = result.state;
+        this.report(result.events);
         this.requestRender();
       }
       this.aiTimer = setTimeout(() => {
@@ -351,6 +470,9 @@ export class App {
     this.state = createInitialState(this.data);
     this.selection = null;
     this.hovered = null;
+    this.history = [];
+    this.flashes = [];
+    this.lastReport = '';
     this.updatePanel();
     this.requestRender();
   }
@@ -370,6 +492,9 @@ export class App {
     });
     on(this.elements.cancel, 'click', () => {
       this.clearSelection();
+    });
+    on(this.elements.undo, 'click', () => {
+      this.undo();
     });
     on(this.elements.capture, 'click', () => {
       this.captureHere();
@@ -438,6 +563,10 @@ export class App {
         if ((this.selection?.preview ?? null) !== null) this.commit();
         else this.endTurn();
         break;
+      case 'u':
+      case 'U':
+        this.undo();
+        break;
       case 'Escape':
         this.clearSelection();
         break;
@@ -480,7 +609,7 @@ export class App {
   // ---- 表示 ---------------------------------------------------------------
 
   private updatePanel(): void {
-    const { turnLabel, readout, confirm, cancel, capture, wait, result, resultText } =
+    const { turnLabel, readout, confirm, cancel, undo, capture, wait, result, resultText } =
       this.elements;
 
     turnLabel.textContent = `ターン ${this.state.turn} / ${this.state.turnLimit} · ${this.factionName(this.state.activeFaction)}の手番`;
@@ -489,6 +618,7 @@ export class App {
     const previewing = (selection?.preview ?? null) !== null;
     confirm.hidden = !previewing;
     cancel.hidden = selection === null;
+    undo.hidden = this.history.length === 0 || this.isBusy();
     capture.hidden =
       selection === null || captureBlockedReason(this.data, this.state, selection.unitId) !== null;
     wait.hidden = selection === null || previewing;
@@ -502,7 +632,8 @@ export class App {
           : `${this.factionName(outcome.winner)}の勝利 · ${this.reasonName(outcome.reason)}`;
     }
 
-    readout.textContent = this.describeFocus();
+    const focus = this.describeFocus();
+    readout.textContent = this.lastReport === '' ? focus : `${this.lastReport} ｜ ${focus}`;
   }
 
   private describeFocus(): string {
@@ -564,19 +695,17 @@ export class App {
     const offset = toOffset(hex);
     const terrainId = terrainIdAt(this.data.board, hex);
     const terrain = terrainId === null ? null : this.data.terrain.get(terrainId);
-    const parts = [`(${offset.col}, ${offset.row})`, terrain?.name ?? '盤外'];
+    const parts = [`(${offset.col}, ${offset.row})`];
 
-    // 増援の予定は敵味方を問わず読める（第4.6章）
-    const facility = facilityAt(this.state, hex);
-    if (facility !== undefined) {
-      const owner = facility.owner === null ? '中立' : this.factionName(facility.owner);
-      const next = facility.queue[0];
-      const schedule =
-        facility.nextSpawnTurn === null || next === undefined
-          ? ''
-          : `／ターン${facility.nextSpawnTurn}に ${unitDef(this.data, next).name}`;
-      parts.push(`${owner}${schedule}`);
+    if (terrain !== null && terrain !== undefined) {
+      // 地形効果は「守ってくれるか、何もしないか」なので、その場で読めるようにする
+      const defense = terrain.defense > 1 ? `防御 ×${terrain.defense.toFixed(1)}` : '防御なし';
+      parts.push(`${terrain.name}（${defense}${this.describeMoveCost(hex)}）`);
+    } else {
+      parts.push('盤外');
     }
+
+    parts.push(...this.describeFacility(hex));
 
     if (withUnit) {
       const unit = unitAt(this.state, hex);
@@ -588,6 +717,45 @@ export class App {
       }
     }
     return parts.join(' · ');
+  }
+
+  /** 選択中のユニットにとっての進入コスト。選んでいなければ何も出さない。 */
+  private describeMoveCost(hex: Hex): string {
+    const selection = this.selection;
+    if (selection === null) return '';
+    const unit = this.state.units.find((item) => item.id === selection.unitId);
+    if (unit === undefined) return '';
+    const cost = moveCostFor(this.data, unitDef(this.data, unit.type), hex);
+    return cost === null ? ' / 進入不可' : ` / 移動コスト ${cost}`;
+  }
+
+  /**
+   * 施設の中身。**キューの内容と次の出現ターンは敵味方を問わずいつでも読める**（第4.6章）。
+   * 「3ターン後にここへ敵戦車が出る」という読みを成立させるための表示。
+   */
+  private describeFacility(hex: Hex): string[] {
+    const facility = facilityAt(this.state, hex);
+    if (facility === undefined) return [];
+
+    const owner = facility.owner === null ? '中立' : this.factionName(facility.owner);
+    const parts = [`${this.facilityName(facility.kind)}: ${owner}`];
+
+    if (facility.queue.length === 0) {
+      parts.push('増援なし');
+      return parts;
+    }
+
+    const queue = facility.queue.map((type) => unitDef(this.data, type).name).join(' → ');
+    if (facility.nextSpawnTurn === null) {
+      // 中立のまま。占領すればこの順で出てくる
+      parts.push(`占領すると ${queue}（${facility.interval}ターンごと）`);
+    } else {
+      const remaining = Math.max(0, facility.nextSpawnTurn - this.state.turn);
+      const when = remaining === 0 ? '次の自軍ターン' : `あと${remaining}ターン`;
+      parts.push(`次の増援 ${queue.split(' → ')[0] ?? ''}（${when}）`);
+      if (facility.queue.length > 1) parts.push(`残り ${queue}`);
+    }
+    return parts;
   }
 
   private factionName(faction: FactionId): string {
@@ -618,6 +786,15 @@ export class App {
   }
 
   private render(): void {
+    const now = performance.now();
+    this.flashes = this.flashes.filter((flash) => now - flash.born < FLASH_MS);
+    const flashes: RenderFlash[] = this.flashes.map((flash) => ({
+      hex: flash.hex,
+      text: flash.text,
+      color: flash.color,
+      progress: (now - flash.born) / FLASH_MS,
+    }));
+
     const units: RenderUnit[] = this.state.units
       .filter((unit) => unit.carriedBy === null)
       .map((unit) => ({
@@ -640,6 +817,17 @@ export class App {
       if (target !== undefined) targetHexes.add(hexKey(target.hex));
     }
 
+    // 施設の現況。所有者と「あと何ターンで増援か」を盤面に出す（第4.6章）
+    const facilityOwners = new Map<HexKey, FactionId | null>();
+    const spawnCountdown = new Map<HexKey, number>();
+    for (const facility of this.state.facilities) {
+      const key = hexKey(facility.hex);
+      facilityOwners.set(key, facility.owner);
+      if (facility.nextSpawnTurn !== null && facility.queue.length > 0) {
+        spawnCountdown.set(key, Math.max(0, facility.nextSpawnTurn - this.state.turn));
+      }
+    }
+
     const preview = selection?.preview ?? null;
     const focus =
       preview?.kind === 'attack'
@@ -654,8 +842,22 @@ export class App {
       targets: targetHexes.size > 0 ? targetHexes : null,
       path: preview?.kind === 'move' ? preview.path : null,
       focus,
+      facilityOwners,
+      spawnCountdown,
+      flashes,
     };
-    drawBoard(this.surface.ctx, this.data, this.camera, scene, this.surface.logicalSize);
+    drawBoard(
+      this.surface.ctx,
+      this.data,
+      this.camera,
+      scene,
+      this.surface.logicalSize,
+      // 盤面には短縮名を出す。正式名は読み上げ欄に出るので重複させない
+      unitLabel,
+    );
+
+    // 表示が残っている間は描き続ける
+    if (this.flashes.length > 0) this.requestRender();
   }
 }
 

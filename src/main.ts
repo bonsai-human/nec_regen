@@ -34,6 +34,7 @@ function mount(): void {
       turnLabel: required<HTMLElement>('#turn-label'),
       confirm: required<HTMLButtonElement>('#confirm'),
       cancel: required<HTMLButtonElement>('#cancel'),
+      undo: required<HTMLButtonElement>('#undo'),
       capture: required<HTMLButtonElement>('#capture'),
       wait: required<HTMLButtonElement>('#wait'),
       endTurn: required<HTMLButtonElement>('#end-turn'),
