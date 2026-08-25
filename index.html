@@ -15,6 +15,7 @@
     <div id="app" class="app">
       <header class="app__bar">
         <span class="app__title">ヘクス戦術シミュレーション</span>
+        <span id="turn-label" class="app__turn"></span>
         <span id="map-name" class="app__phase"></span>
       </header>
       <main id="stage" class="app__stage">
@@ -23,6 +24,9 @@
       <footer class="app__panel">
         <p id="readout" class="app__readout">読み込み中…</p>
         <div class="app__controls">
+          <button id="confirm" class="btn btn--primary" type="button" hidden>確定</button>
+          <button id="cancel" class="btn" type="button" hidden>取消</button>
+          <button id="end-turn" class="btn" type="button">ターン終了</button>
           <button id="zoom-out" class="btn" type="button" aria-label="縮小">−</button>
           <button id="zoom-fit" class="btn" type="button" aria-label="全体表示">全体</button>
           <button id="zoom-in" class="btn" type="button" aria-label="拡大">＋</button>

@@ -223,7 +223,10 @@ export interface Outcome {
 /** ゲーム全体の状態。これを JSON 化したものがセーブデータになる。 */
 export interface GameState {
   readonly mapId: string;
-  /** 1 始まり。両陣営が1回ずつ動いて1ターンではなく、手番ごとに増える。 */
+  /**
+   * 1 始まり。**全陣営が1回ずつ手番を終えると1つ進む**（`activeFaction` が先頭へ戻るとき）。
+   * 増援の出現間隔とターン制限は、この数え方を基準にする。
+   */
   readonly turn: number;
   readonly factions: readonly FactionId[];
   readonly activeFaction: FactionId;

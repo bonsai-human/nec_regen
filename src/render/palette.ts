@@ -16,6 +16,9 @@ export const COLORS = {
   gridStrong: 'rgba(255, 255, 255, 0.22)',
   outOfBoard: '#0b0e12',
   hover: 'rgba(255, 255, 255, 0.28)',
+  /** 移動できるヘクスの敷き色。地形の判別を潰さない程度に薄く重ねる。 */
+  reachable: 'rgba(110, 168, 254, 0.30)',
+  path: '#ffd479',
   facilityNeutral: '#c9ccd1',
   text: '#e6e9ee',
   textDim: '#9aa2ad',

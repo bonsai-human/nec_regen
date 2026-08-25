@@ -8,7 +8,7 @@
  * `core` を読むだけで、状態は一切書き換えない（第3.1章）。
  */
 
-import { hexKey, type Hex } from '@/core/hex';
+import { hexKey, type Hex, type HexKey } from '@/core/hex';
 import { terrainIdAt, type GameData } from '@/core/map';
 import { MAX_STRENGTH, type FactionId, type UnitTypeId } from '@/core/types';
 import type { Camera } from './camera';
@@ -29,6 +29,10 @@ export interface RenderScene {
   readonly hovered: Hex | null;
   /** 選択中のヘクス。 */
   readonly selected: Hex | null;
+  /** 選択中のユニットが移動を終えられるヘクス。 */
+  readonly reachable: ReadonlySet<HexKey> | null;
+  /** 確定前の移動経路プレビュー（第7.2章「プレビュー → 確定」）。 */
+  readonly path: readonly Hex[] | null;
 }
 
 /** ラベルを描いても潰れない最小倍率。これ未満では記号を省く。 */
@@ -72,6 +76,21 @@ export function drawBoard(
     }
   }
 
+  // 移動できるヘクス。ユニットの下に敷いて、駒の視認性を落とさない
+  if (scene.reachable !== null) {
+    for (const { hex } of visible) {
+      if (!scene.reachable.has(hexKey(hex))) continue;
+      tracePath(ctx, camera.hexToScreen(hex), scale);
+      ctx.fillStyle = COLORS.reachable;
+      ctx.fill();
+    }
+  }
+
+  // 経路プレビュー
+  if (scene.path !== null && scene.path.length > 1) {
+    drawPath(ctx, camera, scene.path, scale);
+  }
+
   // ハイライト
   if (scene.hovered !== null) {
     drawOutline(ctx, camera, scene.hovered, COLORS.hover, Math.max(1.5, scale * 0.06));
@@ -113,6 +132,37 @@ function drawOutline(
   ctx.lineWidth = lineWidth;
   ctx.strokeStyle = color;
   ctx.stroke();
+}
+
+/** 経路を線で描き、終点に停止位置の印を置く。 */
+function drawPath(
+  ctx: CanvasRenderingContext2D,
+  camera: Camera,
+  path: readonly Hex[],
+  scale: number,
+): void {
+  ctx.save();
+  ctx.beginPath();
+  for (const [index, hex] of path.entries()) {
+    const point = camera.hexToScreen(hex);
+    if (index === 0) ctx.moveTo(point.x, point.y);
+    else ctx.lineTo(point.x, point.y);
+  }
+  ctx.lineWidth = Math.max(2, scale * 0.14);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = COLORS.path;
+  ctx.stroke();
+
+  const destination = path.at(-1);
+  if (destination !== undefined) {
+    const point = camera.hexToScreen(destination);
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, scale * 0.22, 0, Math.PI * 2);
+    ctx.fillStyle = COLORS.path;
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 function drawFacility(

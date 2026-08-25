@@ -31,11 +31,14 @@ function mount(): void {
       canvas: required<HTMLCanvasElement>('#board'),
       stage: required<HTMLElement>('#stage'),
       readout,
+      turnLabel: required<HTMLElement>('#turn-label'),
+      confirm: required<HTMLButtonElement>('#confirm'),
+      cancel: required<HTMLButtonElement>('#cancel'),
+      endTurn: required<HTMLButtonElement>('#end-turn'),
       zoomIn: required<HTMLButtonElement>('#zoom-in'),
       zoomOut: required<HTMLButtonElement>('#zoom-out'),
       zoomFit: required<HTMLButtonElement>('#zoom-fit'),
     });
-    readout.textContent = 'ヘクスをタップすると内容を表示します';
   } catch (error) {
     // データ検証に失敗した場合は、何が悪いのかを画面にそのまま出す
     readout.textContent = error instanceof Error ? error.message : String(error);

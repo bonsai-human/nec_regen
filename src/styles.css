@@ -74,6 +74,12 @@ body {
   text-overflow: ellipsis;
 }
 
+.app__turn {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .app__phase {
   flex: 0 0 auto;
   color: var(--fg-dim);
@@ -81,8 +87,14 @@ body {
 }
 
 /* 幅の狭い端末では副次情報を落として盤面の情報を優先する */
-@media (max-width: 420px) {
+@media (max-width: 560px) {
   .app__phase {
+    display: none;
+  }
+}
+
+@media (max-width: 380px) {
+  .app__title {
     display: none;
   }
 }
@@ -112,6 +124,19 @@ body {
   background: var(--panel-bg);
   border-top: 1px solid var(--line);
   user-select: none;
+}
+
+/* 狭い画面では情報と操作を上下に分ける（Phase 6 でボトムシートに発展させる） */
+@media (max-width: 700px) {
+  .app__panel {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .app__controls {
+    justify-content: flex-end;
+  }
 }
 
 .app__readout {
@@ -144,6 +169,20 @@ body {
   font-family: inherit;
   cursor: pointer;
   touch-action: manipulation;
+}
+
+.btn[hidden] {
+  display: none;
+}
+
+.btn--primary {
+  background: #2f5fb0;
+  border-color: #3f6fc2;
+  font-weight: 600;
+}
+
+.btn--primary:hover {
+  background: #3a6dc4;
 }
 
 .btn:hover {
