@@ -52,8 +52,8 @@ export interface RenderScene {
   readonly focus: Hex | null;
   /** 施設ごとの現在の所有者。マップ定義ではなく盤面の状態を映す。 */
   readonly facilityOwners: ReadonlyMap<HexKey, FactionId | null> | null;
-  /** 施設ごとの「あと何ターンで増援が出るか」。 */
-  readonly spawnCountdown: ReadonlyMap<HexKey, number> | null;
+  /** 施設ごとの「中にあと何体入っているか」。 */
+  readonly facilityStock: ReadonlyMap<HexKey, number> | null;
   readonly flashes: readonly RenderFlash[];
 }
 
@@ -105,13 +105,13 @@ export function drawBoard(
     }
   }
 
-  // 施設。占領対象なので、所有者と増援の予定が分かる印を重ねる
+  // 施設。占領対象なので、所有者と中身の残数が分かる印を重ねる
   if (scale >= FACILITY_MIN_SCALE) {
     for (const facility of data.map.facilities) {
       const center = camera.hexToScreen(facility.hex);
       if (!onScreen(center, scale, viewport)) continue;
-      const countdown = scene.spawnCountdown?.get(hexKey(facility.hex));
-      drawFacility(ctx, center, scale, ownerAt(scene, facility.hex, data), countdown);
+      const stock = scene.facilityStock?.get(hexKey(facility.hex));
+      drawFacility(ctx, center, scale, ownerAt(scene, facility.hex, data), stock);
     }
   }
 
@@ -259,7 +259,7 @@ function drawFacility(
   center: Point,
   scale: number,
   owner: FactionId | null,
-  countdown: number | undefined,
+  stock: number | undefined,
 ): void {
   const color = owner === null ? COLORS.facilityNeutral : factionColor(owner).edge;
   ctx.save();
@@ -269,7 +269,7 @@ function drawFacility(
   ctx.strokeStyle = color;
   ctx.stroke();
 
-  if (countdown !== undefined && scale >= TERRAIN_PIP_MIN_SCALE) {
+  if (stock !== undefined && scale >= TERRAIN_PIP_MIN_SCALE) {
     const badgeX = center.x + scale * 0.5;
     const badgeY = center.y - scale * 0.5;
     const radius = scale * 0.3;
@@ -285,7 +285,7 @@ function drawFacility(
     ctx.font = `${Math.round(scale * 0.34)}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(String(countdown), badgeX, badgeY);
+    ctx.fillText(String(stock), badgeX, badgeY);
   }
   ctx.restore();
 }

@@ -741,19 +741,22 @@ export class App {
     const parts = [`${this.facilityName(facility.kind)}: ${owner}`];
 
     if (facility.queue.length === 0) {
-      parts.push('増援なし');
+      parts.push('中身: 空');
       return parts;
     }
 
-    const queue = facility.queue.map((type) => unitDef(this.data, type).name).join(' → ');
+    // 工場は「中に何が入っているか」がすべて。生産設備ではないので、
+    // 出し切ったら空になる（第4.6章「キューが尽きたらそれ以上は出ない」）
+    const stock = facility.queue.map((type) => unitDef(this.data, type).name);
+    parts.push(`中身: ${stock.join('・')}（残り${stock.length}）`);
+
+    const head = stock[0] ?? '';
     if (facility.nextSpawnTurn === null) {
-      // 中立のまま。占領すればこの順で出てくる
-      parts.push(`占領すると ${queue}（${facility.interval}ターンごと）`);
+      parts.push(`占領すると ${head} から順に搬出`);
     } else {
       const remaining = Math.max(0, facility.nextSpawnTurn - this.state.turn);
       const when = remaining === 0 ? '次の自軍ターン' : `あと${remaining}ターン`;
-      parts.push(`次の増援 ${queue.split(' → ')[0] ?? ''}（${when}）`);
-      if (facility.queue.length > 1) parts.push(`残り ${queue}`);
+      parts.push(`次の搬出 ${head}（${when}）`);
     }
     return parts;
   }
@@ -817,15 +820,15 @@ export class App {
       if (target !== undefined) targetHexes.add(hexKey(target.hex));
     }
 
-    // 施設の現況。所有者と「あと何ターンで増援か」を盤面に出す（第4.6章）
+    // 施設の現況。所有者と「中にあと何体入っているか」を盤面に出す。
+    // 第4.6章の「敵味方を問わず、全施設のキュー内容はいつでも参照できる」に従い、
+    // 中立・敵の施設も隠さない
     const facilityOwners = new Map<HexKey, FactionId | null>();
-    const spawnCountdown = new Map<HexKey, number>();
+    const facilityStock = new Map<HexKey, number>();
     for (const facility of this.state.facilities) {
       const key = hexKey(facility.hex);
       facilityOwners.set(key, facility.owner);
-      if (facility.nextSpawnTurn !== null && facility.queue.length > 0) {
-        spawnCountdown.set(key, Math.max(0, facility.nextSpawnTurn - this.state.turn));
-      }
+      if (facility.queue.length > 0) facilityStock.set(key, facility.queue.length);
     }
 
     const preview = selection?.preview ?? null;
@@ -843,7 +846,7 @@ export class App {
       path: preview?.kind === 'move' ? preview.path : null,
       focus,
       facilityOwners,
-      spawnCountdown,
+      facilityStock,
       flashes,
     };
     drawBoard(
