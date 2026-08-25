@@ -34,10 +34,15 @@ function mount(): void {
       turnLabel: required<HTMLElement>('#turn-label'),
       confirm: required<HTMLButtonElement>('#confirm'),
       cancel: required<HTMLButtonElement>('#cancel'),
+      capture: required<HTMLButtonElement>('#capture'),
+      wait: required<HTMLButtonElement>('#wait'),
       endTurn: required<HTMLButtonElement>('#end-turn'),
       zoomIn: required<HTMLButtonElement>('#zoom-in'),
       zoomOut: required<HTMLButtonElement>('#zoom-out'),
       zoomFit: required<HTMLButtonElement>('#zoom-fit'),
+      result: required<HTMLElement>('#result'),
+      resultText: required<HTMLElement>('#result-text'),
+      restart: required<HTMLButtonElement>('#restart'),
     });
   } catch (error) {
     // データ検証に失敗した場合は、何が悪いのかを画面にそのまま出す

@@ -5,9 +5,11 @@
  * 乱数がないので「初期状態 + コマンド列」だけで局面が完全に再現でき、
  * アンドゥ・リプレイ・セーブ・AI の先読みがすべてこの一本の道から得られる。
  *
- * 攻撃・占領・積載は Phase 4 以降で追加する。
+ * 積載（load / unload）は Phase 9 で追加する。
  */
 
+import { attackBlockedReason } from './combat';
+import { captureBlockedReason } from './facility';
 import type { Hex } from './hex';
 import { unitDef, type GameData } from './map';
 import { validatePath } from './movement';
@@ -15,6 +17,8 @@ import type { GameState, UnitId } from './types';
 
 export type Command =
   | { readonly type: 'move'; readonly unitId: UnitId; readonly path: readonly Hex[] }
+  | { readonly type: 'attack'; readonly unitId: UnitId; readonly targetId: UnitId }
+  | { readonly type: 'capture'; readonly unitId: UnitId }
   | { readonly type: 'wait'; readonly unitId: UnitId }
   | { readonly type: 'endTurn' };
 
@@ -30,6 +34,10 @@ export function validateCommand(data: GameData, state: GameState, command: Comma
   switch (command.type) {
     case 'move':
       return validateMove(data, state, command.unitId, command.path);
+    case 'attack':
+      return validateAttack(data, state, command.unitId, command.targetId);
+    case 'capture':
+      return validateCapture(data, state, command.unitId);
     case 'wait':
       return validateActor(state, command.unitId);
     case 'endTurn':
@@ -67,4 +75,33 @@ function validateMove(
   if (def.movementType === null) return `${def.name} は自力では移動できません`;
 
   return validatePath(data, state, unitId, path);
+}
+
+function validateAttack(
+  data: GameData,
+  state: GameState,
+  unitId: UnitId,
+  targetId: UnitId,
+): string | null {
+  const actorError = validateActor(state, unitId);
+  if (actorError !== null) return actorError;
+
+  const attacker = state.units.find((item) => item.id === unitId);
+  const defender = state.units.find((item) => item.id === targetId);
+  if (attacker === undefined) return `ユニットが見つかりません: ${unitId}`;
+  if (defender === undefined) return `目標が見つかりません: ${targetId}`;
+
+  // 間接砲は移動したターンには攻撃できない（第4.3章）
+  const def = unitDef(data, attacker.type);
+  if (def.indirect && attacker.hasMoved) {
+    return `${def.name} は移動したターンには攻撃できません`;
+  }
+
+  return attackBlockedReason(data, attacker, defender);
+}
+
+function validateCapture(data: GameData, state: GameState, unitId: UnitId): string | null {
+  const actorError = validateActor(state, unitId);
+  if (actorError !== null) return actorError;
+  return captureBlockedReason(data, state, unitId);
 }

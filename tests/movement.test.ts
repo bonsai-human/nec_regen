@@ -10,11 +10,12 @@ import {
   zocHexes,
 } from '@/core/movement';
 import { createInitialState } from '@/core/state';
-import { loadTerrain, loadUnits, parseMap } from '@/data';
+import { loadRules, loadTerrain, loadUnits, parseMap } from '@/data';
 import type { GameState, UnitTypeId } from '@/core/types';
 
 const units = loadUnits();
 const terrain = loadTerrain();
+const rules = loadRules();
 
 /**
  * 移動のテストは**地形を1文字で書いた小さな盤**で行う。
@@ -64,7 +65,7 @@ function build(
     })),
   };
   const map = parseMap(raw, { units, terrain }, 'test.json');
-  const data: GameData = { board: createBoard(map), map, units, terrain };
+  const data: GameData = { board: createBoard(map), map, units, terrain, rules };
   return { data, state: createInitialState(data) };
 }
 

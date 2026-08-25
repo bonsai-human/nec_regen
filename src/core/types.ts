@@ -176,6 +176,28 @@ export interface MapDef {
 /** ユニットの初期戦力（第4.4章「戦力10制」）。 */
 export const MAX_STRENGTH = 10;
 
+/**
+ * 戦闘のテンポを決める定数（`data/rules.json`・第4.4章）。
+ * バランス調整で触るのはここだけで済むよう、コードには埋め込まない。
+ */
+export interface RulesDef {
+  /** 隣接する味方から借りられる割合。 */
+  readonly supportRate: number;
+  /** 包囲されたときの攻防の倍率。 */
+  readonly encircleMul: number;
+  /** 全体の削れ具合。 */
+  readonly damageScale: number;
+  /** 返しダメージに掛かる係数。 */
+  readonly counterCoef: number;
+  /** 熟練度1レベルあたりの攻撃倍率の増分。 */
+  readonly expStep: number;
+  /** レベル1以降に必要な経験値（昇順）。 */
+  readonly expThresholds: readonly number[];
+  readonly expOnAttack: number;
+  readonly expOnKill: number;
+  readonly expOnCounter: number;
+}
+
 /** 盤上のユニット1体の状態。 */
 export interface Unit {
   readonly id: UnitId;

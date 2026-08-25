@@ -1,19 +1,23 @@
 /**
- * 画面の組み立て（実装計画書 第7.2章・第7.3章）。
+ * 画面の組み立て（実装計画書 第7.2章・第7.3章・第7.5章）。
  *
  * カメラ・入力・描画・コマンドを繋ぐ層。ルールの判断は一切せず、
- * 「できるかどうか」は必ず `core` に尋ねる。
+ * 「できるかどうか」も「どれだけ削れるか」も必ず `core` に尋ねる。
  *
  * 操作は **プレビュー → 確定** の2段階（第7.2章）。
- * 誤タップで駒が飛んでいかないことを、Phase 3 の時点で守っておく。
+ * 攻撃前には**与ダメージと返しダメージを必ず両方**表示する（第7.5章）。
  */
 
+import { GreedyAi } from '@/ai/greedy';
+import { validateCommand, type Command } from '@/core/commands';
+import { attackableTargets, forecastCombat, type CombatForecast } from '@/core/combat';
+import { captureBlockedReason, facilityAt } from '@/core/facility';
 import { hexEquals, hexKey, toOffset, type Hex, type HexKey } from '@/core/hex';
 import { terrainIdAt, unitDef, type GameData } from '@/core/map';
 import { reachableHexes, unitAt, type ReachableMap } from '@/core/movement';
 import { reduce } from '@/core/reducer';
 import { createInitialState } from '@/core/state';
-import type { GameState, Unit, UnitId } from '@/core/types';
+import type { FactionId, GameState, Unit, UnitId } from '@/core/types';
 import { PointerGestures, type GesturePoint } from '@/input/pointer';
 import { drawBoard, type RenderScene, type RenderUnit } from '@/render/board-renderer';
 import { Camera } from '@/render/camera';
@@ -23,6 +27,11 @@ import { CanvasSurface } from '@/render/surface';
 const WHEEL_ZOOM_STEP = 1.12;
 const BUTTON_ZOOM_STEP = 1.25;
 const KEY_PAN_STEP = 64;
+/** AI の手を1つずつ見せる間隔（ミリ秒）。何が起きたか追えるようにする。 */
+const AI_STEP_MS = 220;
+
+/** プレイヤーが操作する陣営。残りは AI が担当する（1人用・第0章）。 */
+const HUMAN_FACTION: FactionId = 'red';
 
 export interface AppElements {
   readonly canvas: HTMLCanvasElement;
@@ -31,28 +40,39 @@ export interface AppElements {
   readonly turnLabel: HTMLElement;
   readonly confirm: HTMLButtonElement;
   readonly cancel: HTMLButtonElement;
+  readonly capture: HTMLButtonElement;
+  readonly wait: HTMLButtonElement;
   readonly endTurn: HTMLButtonElement;
   readonly zoomIn: HTMLButtonElement;
   readonly zoomOut: HTMLButtonElement;
   readonly zoomFit: HTMLButtonElement;
+  readonly result: HTMLElement;
+  readonly resultText: HTMLElement;
+  readonly restart: HTMLButtonElement;
 }
 
-/** 選択の段階。プレビューを挟むことで、確定操作なしには盤面が動かない。 */
+type Preview =
+  | { readonly kind: 'move'; readonly path: readonly Hex[] }
+  | { readonly kind: 'attack'; readonly targetId: UnitId; readonly forecast: CombatForecast };
+
 interface Selection {
   readonly unitId: UnitId;
   readonly reachable: ReachableMap;
   readonly stoppable: ReadonlySet<HexKey>;
-  readonly preview: readonly Hex[] | null;
+  readonly targets: readonly UnitId[];
+  readonly preview: Preview | null;
 }
 
 export class App {
   private readonly surface: CanvasSurface;
   private readonly camera: Camera;
   private readonly gestures: PointerGestures;
+  private readonly ai = new GreedyAi();
   private state: GameState;
   private selection: Selection | null = null;
   private hovered: Hex | null = null;
   private frame: number | null = null;
+  private aiTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly disposers: (() => void)[] = [];
 
   constructor(
@@ -77,7 +97,6 @@ export class App {
         this.requestRender();
       },
       onLongPress: (point) => {
-        // 長押しは情報表示（第7.2章）。盤面は動かさない
         this.hovered = this.hexAt(point);
         this.updatePanel();
         this.requestRender();
@@ -112,6 +131,7 @@ export class App {
     for (const off of this.disposers) off();
     this.disposers.length = 0;
     if (this.frame !== null) cancelAnimationFrame(this.frame);
+    if (this.aiTimer !== null) clearTimeout(this.aiTimer);
   }
 
   // ---- 操作 ---------------------------------------------------------------
@@ -119,28 +139,37 @@ export class App {
   /**
    * タップ1回で起きること。
    *
-   * 1. 選択中で、プレビュー中の目的地をもう一度叩いた → 移動を確定する
-   * 2. 選択中で、行ける先を叩いた → 経路をプレビューする
-   * 3. 自軍の動かせる駒を叩いた → 選択して移動範囲を出す
-   * 4. それ以外 → 選択を解除して、そのヘクスの情報を出す
+   * 1. プレビュー中の対象をもう一度叩いた → 確定する
+   * 2. 選択中の駒で殴れる敵を叩いた → ダメージ予測を出す
+   * 3. 選択中の駒が行ける先を叩いた → 経路をプレビューする
+   * 4. 自軍の動かせる駒を叩いた → 選択する
+   * 5. それ以外 → 選択を解除して、そのヘクスの情報を出す
    */
   private handleTap(hex: Hex | null): void {
     this.hovered = hex;
-    if (hex === null) {
+    if (hex === null || this.isBusy()) {
       this.clearSelection();
       return;
     }
 
     const selection = this.selection;
     if (selection !== null) {
-      const previewEnd = selection.preview?.at(-1);
-      if (previewEnd !== undefined && hexEquals(previewEnd, hex)) {
-        this.commitMove();
+      if (selection.preview !== null && this.isPreviewTarget(selection, hex)) {
+        this.commit();
         return;
       }
-      if (selection.stoppable.has(hexKey(hex))) {
-        const entry = selection.reachable.get(hexKey(hex));
-        this.selection = { ...selection, preview: entry?.path ?? null };
+
+      const target = unitAt(this.state, hex);
+      if (target !== undefined && selection.targets.includes(target.id)) {
+        this.previewAttack(selection, target.id);
+        return;
+      }
+
+      const entry = selection.stoppable.has(hexKey(hex))
+        ? selection.reachable.get(hexKey(hex))
+        : undefined;
+      if (entry !== undefined) {
+        this.selection = { ...selection, preview: { kind: 'move', path: entry.path } };
         this.updatePanel();
         this.requestRender();
         return;
@@ -152,27 +181,65 @@ export class App {
       this.select(unit.id);
       return;
     }
-
     this.clearSelection();
+  }
+
+  private isPreviewTarget(selection: Selection, hex: Hex): boolean {
+    const preview = selection.preview;
+    if (preview === null) return false;
+    if (preview.kind === 'move') {
+      const end = preview.path.at(-1);
+      return end !== undefined && hexEquals(end, hex);
+    }
+    const target = this.state.units.find((unit) => unit.id === preview.targetId);
+    return target !== undefined && hexEquals(target.hex, hex);
   }
 
   private canControl(unit: Unit): boolean {
     return (
       unit.owner === this.state.activeFaction &&
+      this.state.activeFaction === HUMAN_FACTION &&
       unit.carriedBy === null &&
       !unit.hasActed &&
-      !unit.hasMoved &&
       this.state.outcome === null
     );
   }
 
   private select(unitId: UnitId): void {
-    const reachable = reachableHexes(this.data, this.state, unitId);
+    const unit = this.state.units.find((item) => item.id === unitId);
+    if (unit === undefined) return;
+
+    const reachable: ReachableMap = unit.hasMoved
+      ? new Map()
+      : reachableHexes(this.data, this.state, unitId);
     const stoppable = new Set<HexKey>();
     for (const [key, entry] of reachable) {
       if (entry.canStop) stoppable.add(key);
     }
-    this.selection = { unitId, reachable, stoppable, preview: null };
+
+    this.selection = {
+      unitId,
+      reachable,
+      stoppable,
+      targets: this.targetsFor(unitId),
+      preview: null,
+    };
+    this.updatePanel();
+    this.requestRender();
+  }
+
+  /** その駒が今いる位置から殴れる敵。 */
+  private targetsFor(unitId: UnitId): UnitId[] {
+    const unit = this.state.units.find((item) => item.id === unitId);
+    if (unit === undefined) return [];
+    // 間接砲は移動したターンには攻撃できない（第4.3章）
+    if (unitDef(this.data, unit.type).indirect && unit.hasMoved) return [];
+    return attackableTargets(this.data, this.state, unitId).map((target) => target.id);
+  }
+
+  private previewAttack(selection: Selection, targetId: UnitId): void {
+    const forecast = forecastCombat(this.data, this.state, selection.unitId, targetId);
+    this.selection = { ...selection, preview: { kind: 'attack', targetId, forecast } };
     this.updatePanel();
     this.requestRender();
   }
@@ -183,31 +250,107 @@ export class App {
     this.requestRender();
   }
 
-  /** プレビュー中の経路を実際のコマンドとして流す。 */
-  private commitMove(): void {
+  /** プレビュー中の内容をコマンドとして流す。 */
+  private commit(): void {
     const selection = this.selection;
-    const path = selection?.preview;
-    if (selection === null || path === undefined || path === null) return;
+    const preview = selection?.preview ?? null;
+    if (selection === null || preview === null) return;
 
-    try {
-      const result = reduce(this.data, this.state, {
-        type: 'move',
-        unitId: selection.unitId,
-        path,
-      });
-      this.state = result.state;
-      this.selection = null;
-    } catch (error) {
-      // core が拒否した理由をそのまま見せる。UI 側で握り潰さない
-      this.elements.readout.textContent = error instanceof Error ? error.message : String(error);
+    const command: Command =
+      preview.kind === 'move'
+        ? { type: 'move', unitId: selection.unitId, path: preview.path }
+        : { type: 'attack', unitId: selection.unitId, targetId: preview.targetId };
+
+    if (!this.dispatch(command)) return;
+
+    // 移動しただけならまだ行動が残っているので、選択を保ったまま次の判断へ
+    const unit = this.state.units.find((item) => item.id === selection.unitId);
+    if (preview.kind === 'move' && unit !== undefined && !unit.hasActed) {
+      this.select(selection.unitId);
+    } else {
+      this.clearSelection();
     }
+  }
+
+  /** コマンドを1つ流す。拒否されたら理由を表示して false を返す。 */
+  private dispatch(command: Command): boolean {
+    const error = validateCommand(this.data, this.state, command);
+    if (error !== null) {
+      this.elements.readout.textContent = error;
+      return false;
+    }
+    this.state = reduce(this.data, this.state, command).state;
     this.updatePanel();
     this.requestRender();
+    return true;
+  }
+
+  private captureHere(): void {
+    const selection = this.selection;
+    if (selection === null) return;
+    if (this.dispatch({ type: 'capture', unitId: selection.unitId })) this.clearSelection();
+  }
+
+  private waitHere(): void {
+    const selection = this.selection;
+    if (selection === null) return;
+    if (this.dispatch({ type: 'wait', unitId: selection.unitId })) this.clearSelection();
   }
 
   private endTurn(): void {
-    this.state = reduce(this.data, this.state, { type: 'endTurn' }).state;
+    if (this.isBusy()) return;
+    if (!this.dispatch({ type: 'endTurn' })) return;
+    this.clearSelection();
+    this.runAiTurns();
+  }
+
+  /**
+   * AI の手番を1コマンドずつ進める。
+   * 一気に適用すると何が起きたのか分からないので、間隔を空けて見せる。
+   */
+  private runAiTurns(): void {
+    if (this.state.outcome !== null || this.state.activeFaction === HUMAN_FACTION) {
+      this.aiTimer = null;
+      this.updatePanel();
+      return;
+    }
+
+    const queue = this.ai.planTurn(this.data, this.state, this.state.activeFaction);
+    const step = (index: number): void => {
+      const command = queue[index];
+      if (command === undefined) {
+        this.aiTimer = null;
+        this.runAiTurns();
+        return;
+      }
+      if (validateCommand(this.data, this.state, command) === null) {
+        this.state = reduce(this.data, this.state, command).state;
+        this.requestRender();
+      }
+      this.aiTimer = setTimeout(() => {
+        step(index + 1);
+      }, AI_STEP_MS);
+      this.updatePanel();
+    };
+
+    this.aiTimer = setTimeout(() => {
+      step(0);
+    }, AI_STEP_MS);
+    this.updatePanel();
+  }
+
+  /** AI が動いている間、あるいは決着後は操作を受け付けない。 */
+  private isBusy(): boolean {
+    return this.aiTimer !== null || this.state.outcome !== null;
+  }
+
+  /** マップを最初からやり直す。AI が決定的なので同じ展開を再現できる（第7.2章）。 */
+  private restart(): void {
+    if (this.aiTimer !== null) clearTimeout(this.aiTimer);
+    this.aiTimer = null;
+    this.state = createInitialState(this.data);
     this.selection = null;
+    this.hovered = null;
     this.updatePanel();
     this.requestRender();
   }
@@ -223,13 +366,22 @@ export class App {
     };
 
     on(this.elements.confirm, 'click', () => {
-      this.commitMove();
+      this.commit();
     });
     on(this.elements.cancel, 'click', () => {
       this.clearSelection();
     });
+    on(this.elements.capture, 'click', () => {
+      this.captureHere();
+    });
+    on(this.elements.wait, 'click', () => {
+      this.waitHere();
+    });
     on(this.elements.endTurn, 'click', () => {
       this.endTurn();
+    });
+    on(this.elements.restart, 'click', () => {
+      this.restart();
     });
     on(this.elements.zoomIn, 'click', () => {
       this.camera.zoomBy(BUTTON_ZOOM_STEP);
@@ -283,7 +435,7 @@ export class App {
         this.requestRender();
         break;
       case 'Enter':
-        if ((this.selection?.preview ?? null) !== null) this.commitMove();
+        if ((this.selection?.preview ?? null) !== null) this.commit();
         else this.endTurn();
         break;
       case 'Escape':
@@ -328,33 +480,83 @@ export class App {
   // ---- 表示 ---------------------------------------------------------------
 
   private updatePanel(): void {
-    const { turnLabel, readout, confirm, cancel } = this.elements;
-    turnLabel.textContent = `ターン ${this.state.turn} · ${this.factionName(this.state.activeFaction)}の手番`;
+    const { turnLabel, readout, confirm, cancel, capture, wait, result, resultText } =
+      this.elements;
 
-    const previewing = (this.selection?.preview ?? null) !== null;
+    turnLabel.textContent = `ターン ${this.state.turn} / ${this.state.turnLimit} · ${this.factionName(this.state.activeFaction)}の手番`;
+
+    const selection = this.selection;
+    const previewing = (selection?.preview ?? null) !== null;
     confirm.hidden = !previewing;
-    cancel.hidden = this.selection === null;
+    cancel.hidden = selection === null;
+    capture.hidden =
+      selection === null || captureBlockedReason(this.data, this.state, selection.unitId) !== null;
+    wait.hidden = selection === null || previewing;
+
+    const outcome = this.state.outcome;
+    result.hidden = outcome === null;
+    if (outcome !== null) {
+      resultText.textContent =
+        outcome.winner === null
+          ? '引き分け'
+          : `${this.factionName(outcome.winner)}の勝利 · ${this.reasonName(outcome.reason)}`;
+    }
 
     readout.textContent = this.describeFocus();
   }
 
   private describeFocus(): string {
+    if (this.state.outcome !== null) return '決着しました';
+    if (this.aiTimer !== null) return `${this.factionName(this.state.activeFaction)}の手番です…`;
+
     const selection = this.selection;
-    if (selection !== null) {
-      const unit = this.state.units.find((item) => item.id === selection.unitId);
-      if (unit !== undefined) {
-        const def = unitDef(this.data, unit.type);
-        const preview = selection.preview;
-        if (preview !== null && preview !== undefined) {
-          const cost = selection.reachable.get(hexKey(preview.at(-1)!))?.cost ?? 0;
-          return `${def.name} を ${this.describeHex(preview.at(-1)!)} へ（移動力 ${cost} / ${def.movePoints}）· もう一度タップか「確定」で移動`;
+    const unit =
+      selection === null
+        ? undefined
+        : this.state.units.find((item) => item.id === selection.unitId);
+
+    if (selection !== null && unit !== undefined) {
+      const def = unitDef(this.data, unit.type);
+      const preview = selection.preview;
+
+      if (preview?.kind === 'attack') {
+        const target = this.state.units.find((item) => item.id === preview.targetId);
+        const targetName = target === undefined ? '敵' : unitDef(this.data, target.type).name;
+        const forecast = preview.forecast;
+        // 与ダメージと返しダメージは必ずセットで見せる（第7.5章）
+        const parts = [
+          `${def.name} → ${targetName}`,
+          `与ダメージ ${forecast.damageToDefender}`,
+          `返し ${forecast.damageToAttacker}`,
+        ];
+        if (forecast.attacker.attackSupport.length > 0) {
+          parts.push(`支援 ${forecast.attacker.attackSupport.length}体`);
         }
-        return `${def.name}（移動力 ${def.movePoints}）· 行き先をタップ`;
+        if (forecast.defender.encircled) parts.push('包囲成立');
+        parts.push('もう一度タップか「確定」で攻撃');
+        return parts.join(' · ');
       }
+
+      if (preview?.kind === 'move') {
+        const end = preview.path.at(-1) ?? unit.hex;
+        const cost = selection.reachable.get(hexKey(end))?.cost ?? 0;
+        return `${def.name} を ${this.describeHex(end)} へ（移動力 ${cost} / ${def.movePoints}）· もう一度タップか「確定」で移動`;
+      }
+
+      const level = expLevelOf(this.data, unit.exp);
+      const status = [`${def.name}`, `戦力 ${unit.strength}`];
+      if (level > 0) status.push(`熟練 Lv${level}`);
+      if (!unit.hasMoved) status.push(`移動力 ${def.movePoints}`);
+
+      const actions: string[] = [];
+      if (!unit.hasMoved) actions.push('行き先');
+      if (selection.targets.length > 0) actions.push('攻撃する敵');
+      status.push(actions.length > 0 ? `${actions.join('か')}をタップ` : '「待機」で行動終了');
+      return status.join(' · ');
     }
 
     const hex = this.hovered;
-    if (hex === null) return 'ユニットをタップすると移動範囲を表示します';
+    if (hex === null) return 'ユニットをタップすると移動範囲と攻撃目標を表示します';
     return this.describeHex(hex, true);
   }
 
@@ -363,22 +565,48 @@ export class App {
     const terrainId = terrainIdAt(this.data.board, hex);
     const terrain = terrainId === null ? null : this.data.terrain.get(terrainId);
     const parts = [`(${offset.col}, ${offset.row})`, terrain?.name ?? '盤外'];
+
+    // 増援の予定は敵味方を問わず読める（第4.6章）
+    const facility = facilityAt(this.state, hex);
+    if (facility !== undefined) {
+      const owner = facility.owner === null ? '中立' : this.factionName(facility.owner);
+      const next = facility.queue[0];
+      const schedule =
+        facility.nextSpawnTurn === null || next === undefined
+          ? ''
+          : `／ターン${facility.nextSpawnTurn}に ${unitDef(this.data, next).name}`;
+      parts.push(`${owner}${schedule}`);
+    }
+
     if (withUnit) {
       const unit = unitAt(this.state, hex);
       if (unit !== undefined) {
         const def = unitDef(this.data, unit.type);
         parts.push(
-          `${def.name}（${this.factionName(unit.owner)} / 戦力 ${unit.strength}${unit.hasMoved ? ' / 移動済' : ''}）`,
+          `${def.name}（${this.factionName(unit.owner)} / 戦力 ${unit.strength}${unit.hasActed ? ' / 行動済' : ''}）`,
         );
       }
     }
     return parts.join(' · ');
   }
 
-  private factionName(faction: string): string {
+  private factionName(faction: FactionId): string {
     if (faction === 'red') return '赤軍';
     if (faction === 'blue') return '青軍';
     return faction;
+  }
+
+  private reasonName(reason: string): string {
+    switch (reason) {
+      case 'annihilation':
+        return '敵の全滅';
+      case 'hq':
+        return '司令部の占領';
+      case 'turnLimit':
+        return 'ターン制限';
+      default:
+        return '引き分け';
+    }
   }
 
   private requestRender(): void {
@@ -397,19 +625,45 @@ export class App {
         type: unit.type,
         owner: unit.owner,
         strength: unit.strength,
+        acted: unit.hasActed,
       }));
 
-    const selected = this.selection
-      ? (this.state.units.find((unit) => unit.id === this.selection?.unitId)?.hex ?? null)
-      : null;
+    const selection = this.selection;
+    const selected =
+      selection === null
+        ? null
+        : (this.state.units.find((unit) => unit.id === selection.unitId)?.hex ?? null);
+
+    const targetHexes = new Set<HexKey>();
+    for (const id of selection?.targets ?? []) {
+      const target = this.state.units.find((unit) => unit.id === id);
+      if (target !== undefined) targetHexes.add(hexKey(target.hex));
+    }
+
+    const preview = selection?.preview ?? null;
+    const focus =
+      preview?.kind === 'attack'
+        ? (this.state.units.find((unit) => unit.id === preview.targetId)?.hex ?? null)
+        : null;
 
     const scene: RenderScene = {
       units,
       hovered: this.hovered,
       selected,
-      reachable: this.selection?.stoppable ?? null,
-      path: this.selection?.preview ?? null,
+      reachable: selection?.stoppable ?? null,
+      targets: targetHexes.size > 0 ? targetHexes : null,
+      path: preview?.kind === 'move' ? preview.path : null,
+      focus,
     };
     drawBoard(this.surface.ctx, this.data, this.camera, scene, this.surface.logicalSize);
   }
+}
+
+/** 表示用の熟練度レベル。 */
+function expLevelOf(data: GameData, exp: number): number {
+  let level = 0;
+  for (const threshold of data.rules.expThresholds) {
+    if (exp >= threshold) level += 1;
+  }
+  return level;
 }

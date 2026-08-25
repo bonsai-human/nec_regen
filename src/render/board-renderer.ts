@@ -21,6 +21,8 @@ export interface RenderUnit {
   readonly type: UnitTypeId;
   readonly owner: FactionId;
   readonly strength: number;
+  /** 行動を終えた駒は暗くする。 */
+  readonly acted?: boolean;
 }
 
 export interface RenderScene {
@@ -31,8 +33,12 @@ export interface RenderScene {
   readonly selected: Hex | null;
   /** 選択中のユニットが移動を終えられるヘクス。 */
   readonly reachable: ReadonlySet<HexKey> | null;
+  /** 選択中のユニットが攻撃できる敵のヘクス。 */
+  readonly targets: ReadonlySet<HexKey> | null;
   /** 確定前の移動経路プレビュー（第7.2章「プレビュー → 確定」）。 */
   readonly path: readonly Hex[] | null;
+  /** ダメージ予測を出している攻撃目標。 */
+  readonly focus: Hex | null;
 }
 
 /** ラベルを描いても潰れない最小倍率。これ未満では記号を省く。 */
@@ -86,6 +92,16 @@ export function drawBoard(
     }
   }
 
+  // 攻撃できる敵。移動範囲とは別の色で敷く
+  if (scene.targets !== null) {
+    for (const { hex } of visible) {
+      if (!scene.targets.has(hexKey(hex))) continue;
+      tracePath(ctx, camera.hexToScreen(hex), scale);
+      ctx.fillStyle = COLORS.target;
+      ctx.fill();
+    }
+  }
+
   // 経路プレビュー
   if (scene.path !== null && scene.path.length > 1) {
     drawPath(ctx, camera, scene.path, scale);
@@ -97,6 +113,9 @@ export function drawBoard(
   }
   if (scene.selected !== null) {
     drawOutline(ctx, camera, scene.selected, COLORS.text, Math.max(2, scale * 0.09));
+  }
+  if (scene.focus !== null) {
+    drawOutline(ctx, camera, scene.focus, COLORS.focus, Math.max(2, scale * 0.11));
   }
 
   // ユニット
@@ -188,6 +207,10 @@ function drawUnit(
   const colors = factionColor(unit.owner);
   const radius = scale * 0.52;
 
+  ctx.save();
+  // 行動を終えた駒は沈める。次に動かせる駒が一目で分かるようにする
+  if (unit.acted === true) ctx.globalAlpha = 0.55;
+
   ctx.beginPath();
   ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
   ctx.fillStyle = colors.fill;
@@ -215,6 +238,8 @@ function drawUnit(
     ctx.fillStyle = colors.edge;
     ctx.fillRect(x, y, (barWidth * unit.strength) / MAX_STRENGTH, barHeight);
   }
+
+  ctx.restore();
 }
 
 /** ヘクス1つ分の余白を見て、画面外の描画を省く。 */

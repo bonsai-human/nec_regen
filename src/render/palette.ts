@@ -19,6 +19,10 @@ export const COLORS = {
   /** 移動できるヘクスの敷き色。地形の判別を潰さない程度に薄く重ねる。 */
   reachable: 'rgba(110, 168, 254, 0.30)',
   path: '#ffd479',
+  /** 攻撃できる敵の敷き色。 */
+  target: 'rgba(226, 84, 76, 0.38)',
+  /** ダメージ予測を出している目標の枠。 */
+  focus: '#ffd479',
   facilityNeutral: '#c9ccd1',
   text: '#e6e9ee',
   textDim: '#9aa2ad',

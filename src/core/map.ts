@@ -7,7 +7,7 @@
  */
 
 import { toAxial, toOffset, type Hex, type Offset } from './hex';
-import type { MapDef, TerrainDef, TerrainId, UnitDef, UnitTypeId } from './types';
+import type { MapDef, RulesDef, TerrainDef, TerrainId, UnitDef, UnitTypeId } from './types';
 
 /** odd-q オフセットの矩形盤面。 */
 export interface Board {
@@ -75,6 +75,8 @@ export interface GameData {
   readonly map: MapDef;
   readonly units: ReadonlyMap<UnitTypeId, UnitDef>;
   readonly terrain: ReadonlyMap<TerrainId, TerrainDef>;
+  /** 戦闘のテンポを決める定数（第4.4章）。 */
+  readonly rules: RulesDef;
 }
 
 export function unitDef(data: GameData, type: UnitTypeId): UnitDef {

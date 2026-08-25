@@ -4,11 +4,12 @@ import { createBoard, type GameData } from '@/core/map';
 import { validateCommand, type Command } from '@/core/commands';
 import { CommandError, reduce, reduceAll } from '@/core/reducer';
 import { createInitialState } from '@/core/state';
-import { loadGameData, loadTerrain, loadUnits, parseMap } from '@/data';
+import { loadGameData, loadRules, loadTerrain, loadUnits, parseMap } from '@/data';
 import type { GameState } from '@/core/types';
 
 const units = loadUnits();
 const terrain = loadTerrain();
+const rules = loadRules();
 
 function build(): { data: GameData; state: GameState } {
   const raw = {
@@ -28,7 +29,7 @@ function build(): { data: GameData; state: GameState } {
     ],
   };
   const map = parseMap(raw, { units, terrain }, 'test.json');
-  const data: GameData = { board: createBoard(map), map, units, terrain };
+  const data: GameData = { board: createBoard(map), map, units, terrain, rules };
   return { data, state: createInitialState(data) };
 }
 
@@ -126,7 +127,7 @@ describe('移動コマンド', () => {
       ],
     };
     const map = parseMap(raw, { units, terrain }, 'test.json');
-    const data: GameData = { board: createBoard(map), map, units, terrain };
+    const data: GameData = { board: createBoard(map), map, units, terrain, rules };
     const state = createInitialState(data);
     expect(
       validateCommand(data, state, { type: 'move', unitId: 1, path: [at(0, 0), at(1, 0)] }),

@@ -1,0 +1,11 @@
+{
+  "supportRate": 0.25,
+  "encircleMul": 0.5,
+  "damageScale": 0.6,
+  "counterCoef": 0.7,
+  "expStep": 0.1,
+  "expThresholds": [3, 8],
+  "expOnAttack": 1,
+  "expOnKill": 2,
+  "expOnCounter": 1
+}

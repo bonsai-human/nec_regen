@@ -25,6 +25,8 @@
         <p id="readout" class="app__readout">読み込み中…</p>
         <div class="app__controls">
           <button id="confirm" class="btn btn--primary" type="button" hidden>確定</button>
+          <button id="capture" class="btn" type="button" hidden>占領</button>
+          <button id="wait" class="btn" type="button" hidden>待機</button>
           <button id="cancel" class="btn" type="button" hidden>取消</button>
           <button id="end-turn" class="btn" type="button">ターン終了</button>
           <button id="zoom-out" class="btn" type="button" aria-label="縮小">−</button>
@@ -32,6 +34,12 @@
           <button id="zoom-in" class="btn" type="button" aria-label="拡大">＋</button>
         </div>
       </footer>
+      <div id="result" class="result" hidden>
+        <div class="result__box">
+          <p id="result-text" class="result__text"></p>
+          <button id="restart" class="btn btn--primary" type="button">最初から</button>
+        </div>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
