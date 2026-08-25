@@ -1,11 +1,22 @@
-/* レスポンシブの骨格のみ。パネル類は Phase 2 以降で追加する。 */
+/*
+ * レスポンシブレイアウトの骨格（実装計画書 第7.3章）。
+ *
+ * - 横長（PC・タブレット横）: 情報と操作を1行に収め、盤面を最大化する
+ * - 縦長（スマートフォン）: 盤面を画面の大半に置き、下部に情報＋操作の帯を敷く
+ *   （Phase 6 でボトムシートに発展させる）
+ * - タップ対象は 44 CSS px 以上（第7.3章）
+ * - セーフエリア（ノッチ・ホームバー）に対応する
+ */
 
 :root {
   --bg: #0e1116;
   --bar-bg: #161b22;
+  --panel-bg: #12171e;
+  --line: #21262d;
   --fg: #d6dae0;
   --fg-dim: #7d8590;
   --bar-h: 44px;
+  --tap: 44px;
   color-scheme: dark;
 }
 
@@ -27,7 +38,7 @@ body {
     'Hiragino Kaku Gothic ProN',
     'Noto Sans JP',
     sans-serif;
-  /* タッチ操作のダブルタップズーム等を抑止（Phase 2 の入力層の前提） */
+  /* タッチ操作のダブルタップズーム等を抑止（ジェスチャ層が受け持つ） */
   touch-action: none;
   -webkit-text-size-adjust: 100%;
 }
@@ -49,7 +60,7 @@ body {
   gap: 12px;
   padding: 0 12px;
   background: var(--bar-bg);
-  border-bottom: 1px solid #21262d;
+  border-bottom: 1px solid var(--line);
   font-size: 13px;
   user-select: none;
 }
@@ -80,6 +91,9 @@ body {
   flex: 1 1 auto;
   position: relative;
   min-height: 0;
+  /* 盤面のドラッグ・ピンチはすべてジェスチャ層が扱う */
+  touch-action: none;
+  overscroll-behavior: none;
 }
 
 .app__canvas {
@@ -88,13 +102,75 @@ body {
   height: 100%;
 }
 
+.app__panel {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  background: var(--panel-bg);
+  border-top: 1px solid var(--line);
+  user-select: none;
+}
+
+.app__readout {
+  margin: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app__controls {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+.btn {
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #1b222c;
+  color: var(--fg);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.btn:hover {
+  background: #232c38;
+}
+
+.btn:active {
+  background: #2b3644;
+}
+
+.btn:focus-visible {
+  outline: 2px solid #6ea8fe;
+  outline-offset: 2px;
+}
+
 /* 横向きスマートフォンではバーを詰めて盤面を広く取る */
 @media (max-height: 480px) {
   :root {
     --bar-h: 34px;
+    --tap: 36px;
   }
 
   .app__bar {
+    font-size: 12px;
+  }
+
+  .app__readout {
     font-size: 12px;
   }
 }

@@ -15,11 +15,19 @@
     <div id="app" class="app">
       <header class="app__bar">
         <span class="app__title">ヘクス戦術シミュレーション</span>
-        <span class="app__phase">Phase 0 — 基盤構築</span>
+        <span id="map-name" class="app__phase"></span>
       </header>
-      <main class="app__stage">
+      <main id="stage" class="app__stage">
         <canvas id="board" class="app__canvas"></canvas>
       </main>
+      <footer class="app__panel">
+        <p id="readout" class="app__readout">読み込み中…</p>
+        <div class="app__controls">
+          <button id="zoom-out" class="btn" type="button" aria-label="縮小">−</button>
+          <button id="zoom-fit" class="btn" type="button" aria-label="全体表示">全体</button>
+          <button id="zoom-in" class="btn" type="button" aria-label="拡大">＋</button>
+        </div>
+      </footer>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

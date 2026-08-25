@@ -1,72 +1,45 @@
 import './styles.css';
-import { CanvasSurface } from '@/render/surface';
 import { loadGameData, MAP_IDS } from '@/data';
+import { App } from '@/ui/app';
 
 /**
  * エントリポイント。
  *
- * Phase 1 時点では、マップ・ユニット・地形の JSON を読み込んで検証が通ることを
- * 画面上で確認できるところまで。マップ描画・入力・ゲームループは Phase 2 以降で載せる。
+ * Phase 2 の範囲は「マップを見て回れること」まで。
+ * 移動・戦闘は Phase 3 以降で載せる。
  */
 
-const BOARD_BG = '#0e1116';
-const TEXT_COLOR = '#7d8590';
-
-function mount(): void {
-  const canvas = document.querySelector<HTMLCanvasElement>('#board');
-  const stage = canvas?.parentElement;
-  if (canvas === null || stage === undefined || stage === null) {
-    throw new Error('#board が見つかりませんでした。');
+function required<T extends Element>(selector: string): T {
+  const element = document.querySelector<T>(selector);
+  if (element === null) {
+    throw new Error(`要素が見つかりませんでした: ${selector}`);
   }
-
-  const surface = new CanvasSurface(canvas);
-  const status = describeData();
-
-  const render = (): void => {
-    surface.clear(BOARD_BG);
-    const { width, height } = surface.logicalSize;
-    const ctx = surface.ctx;
-    ctx.save();
-    ctx.fillStyle = TEXT_COLOR;
-    ctx.font = '13px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    for (const [index, line] of status.entries()) {
-      ctx.fillText(line, width / 2, height / 2 + (index - (status.length - 1) / 2) * 20);
-    }
-    ctx.restore();
-  };
-
-  const fit = (): void => {
-    const rect = stage.getBoundingClientRect();
-    if (surface.resize({ width: rect.width, height: rect.height })) {
-      render();
-    }
-  };
-
-  new ResizeObserver(fit).observe(stage);
-  // DPR は端末の回転や外部ディスプレイ接続で変化しうる
-  window.addEventListener('resize', fit);
-  fit();
-  render();
+  return element;
 }
 
-/** 読み込んだデータの要約。検証に失敗した場合はその内容をそのまま出す。 */
-function describeData(): string[] {
-  const mapId = MAP_IDS[0];
-  if (mapId === undefined) return ['マップが1つも登録されていません'];
+function mount(): void {
+  const readout = required<HTMLElement>('#readout');
   try {
+    const mapId = MAP_IDS[0];
+    if (mapId === undefined) throw new Error('マップが1つも登録されていません。');
+
     const data = loadGameData(mapId);
-    return [
-      `${data.map.name}（${data.map.width} × ${data.map.height}）`,
-      `ユニット ${data.units.size} 種 / 地形 ${data.terrain.size} 種 / 初期配置 ${data.map.units.length} 体`,
-      '盤面の描画は Phase 2 から',
-    ];
+    required<HTMLElement>('#map-name').textContent =
+      `${data.map.name}（${data.map.width} × ${data.map.height}）`;
+
+    new App(data, {
+      canvas: required<HTMLCanvasElement>('#board'),
+      stage: required<HTMLElement>('#stage'),
+      readout,
+      zoomIn: required<HTMLButtonElement>('#zoom-in'),
+      zoomOut: required<HTMLButtonElement>('#zoom-out'),
+      zoomFit: required<HTMLButtonElement>('#zoom-fit'),
+    });
+    readout.textContent = 'ヘクスをタップすると内容を表示します';
   } catch (error) {
-    return [
-      'データの読み込みに失敗しました',
-      error instanceof Error ? error.message : String(error),
-    ];
+    // データ検証に失敗した場合は、何が悪いのかを画面にそのまま出す
+    readout.textContent = error instanceof Error ? error.message : String(error);
+    throw error;
   }
 }
 
