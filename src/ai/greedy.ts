@@ -3,9 +3,11 @@
  *
  * 各ユニットについて実行可能な行動を列挙し、単純なスコアで最良手を選ぶ。
  *
+ * 手番の最初に、施設に格納しているユニットをすべて搬出する。そのあと駒ごとに:
+ *
  * 1. 攻撃可能な敵がいれば、`与ダメージ − 想定反撃ダメージ` が最大の攻撃を選ぶ
  * 2. 占領可能な施設に乗れるなら占領
- * 3. 戦力が半分以下なら自軍施設へ後退して修理
+ * 3. 戦力が半分以下なら自軍施設へ後退し、たどり着いていれば格納して修理する
  * 4. どれも無ければ、最も近い敵または未占領施設へ前進
  *
  * **決定性が最優先。** 候補は必ず明示的にソートしてから走査し、同点は
@@ -14,7 +16,14 @@
 
 import type { Command } from '@/core/commands';
 import { attackableTargets, forecastCombat } from '@/core/combat';
-import { captureBlockedReason, facilityAt, repairsUnit } from '@/core/facility';
+import {
+  accepts,
+  captureBlockedReason,
+  deployableHexes,
+  facilityAt,
+  readyGarrison,
+  storeBlockedReason,
+} from '@/core/facility';
 import { distance, hexKey, type Hex } from '@/core/hex';
 import { unitDef, type GameData } from '@/core/map';
 import { reachableHexes, type ReachableHex } from '@/core/movement';
@@ -31,6 +40,17 @@ export class GreedyAi implements AiPlayer {
   planTurn(data: GameData, state: GameState, faction: FactionId): Command[] {
     const commands: Command[] = [];
     let current = state;
+
+    // 施設に眠らせておく理由はないので、出せるものは先に全部出す。
+    // 搬出したユニットはそのターン動けないため、前進の判断より前に済ませてよい
+    for (const command of this.deployAll(data, current, faction)) {
+      try {
+        current = reduce(data, current, command).state;
+        commands.push(command);
+      } catch {
+        break;
+      }
+    }
 
     // 誰から動かすかで結果が変わるため、ID 昇順に固定する
     const order = current.units
@@ -57,6 +77,51 @@ export class GreedyAi implements AiPlayer {
 
     // 決着したらそこで終わり。決着後の endTurn は受け付けられない
     if (current.outcome === null) commands.push({ type: 'endTurn' });
+    return commands;
+  }
+
+  /**
+   * 格納しているユニットを、出せるだけ搬出する。
+   *
+   * 走査順は 施設の座標 → 格納ユニットの ID、搬出先は隣接ヘクスの固定順の先頭。
+   * すべて安定した基準なので、同じ局面なら必ず同じ搬出になる。
+   */
+  private deployAll(data: GameData, state: GameState, faction: FactionId): Command[] {
+    const commands: Command[] = [];
+    let current = state;
+
+    for (;;) {
+      const ready = readyGarrison(current, faction).sort(
+        (a, b) =>
+          a.facility.hex.q - b.facility.hex.q ||
+          a.facility.hex.r - b.facility.hex.r ||
+          a.stored.id - b.stored.id,
+      );
+
+      let issued = false;
+      for (const { facility, stored } of ready) {
+        const def = unitDef(data, stored.type);
+        const to = deployableHexes(data, current, facility.hex, def)[0];
+        if (to === undefined) continue;
+
+        const command: Command = {
+          type: 'deploy',
+          facilityHex: facility.hex,
+          storedId: stored.id,
+          to,
+        };
+        try {
+          current = reduce(data, current, command).state;
+        } catch {
+          continue;
+        }
+        commands.push(command);
+        issued = true;
+        break;
+      }
+      // 1体も出せなくなったら終わり（出口が全部塞がっている場合を含む）
+      if (!issued) break;
+    }
     return commands;
   }
 
@@ -153,9 +218,16 @@ export class GreedyAi implements AiPlayer {
     return null;
   }
 
-  /** 戦力が半分以下なら、修理できる自軍施設へ後退する。 */
+  /**
+   * 戦力が半分以下なら、修理できる自軍施設へ後退する。
+   * すでに施設の上にいるなら格納して修理に入る（次のターンに全快で出てくる）。
+   */
   private bestRetreat(data: GameData, state: GameState, unit: Unit): Command[] | null {
     if (unit.strength > MAX_STRENGTH * RETREAT_THRESHOLD) return null;
+
+    if (storeBlockedReason(data, state, unit.id) === null) {
+      return [{ type: 'store', unitId: unit.id }];
+    }
     if (unit.hasMoved) return null;
 
     const def = unitDef(data, unit.type);
@@ -163,8 +235,11 @@ export class GreedyAi implements AiPlayer {
       if (!entry.canStop) continue;
       const facility = facilityAt(state, entry.hex);
       if (facility?.owner !== unit.owner) continue;
-      if (!repairsUnit(facility.kind, def)) continue;
-      return [{ type: 'move', unitId: unit.id, path: entry.path }];
+      if (!accepts(facility.kind, def)) continue;
+      return [
+        { type: 'move', unitId: unit.id, path: entry.path },
+        { type: 'store', unitId: unit.id },
+      ];
     }
     return null;
   }

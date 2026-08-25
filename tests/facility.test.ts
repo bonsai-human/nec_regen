@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { hexKey, neighbors, toAxial, toOffset, type Hex } from '@/core/hex';
+import { neighbors, toAxial, toOffset, type Hex } from '@/core/hex';
 import { createBoard, type GameData } from '@/core/map';
-import { facilityAt, repairsUnit, spawnReinforcements } from '@/core/facility';
+import { accepts, deployableHexes, facilityAt } from '@/core/facility';
 import { reduce, reduceAll } from '@/core/reducer';
 import { createInitialState } from '@/core/state';
 import { evaluateVictory } from '@/core/victory';
@@ -72,7 +72,7 @@ function ringOf(col: number, row: number, width: number, height: number): [numbe
 }
 
 describe('占領（第4.6章）', () => {
-  const facilities = [{ hex: [1, 1], kind: 'factory', owner: null, queue: [], interval: 0 }];
+  const facilities = [{ hex: [1, 1], kind: 'factory', owner: null, garrison: [] }];
 
   it('歩兵が施設ヘクスの上で占領できる', () => {
     const { data, state } = build(
@@ -97,7 +97,7 @@ describe('占領（第4.6章）', () => {
         { at: [1, 1], type: 'mbt', owner: 'red' },
         { at: [2, 2], type: 'infantry', owner: 'blue' },
       ],
-      [{ hex: [1, 1], kind: 'factory', owner: 'red', queue: [], interval: 0 }],
+      [{ hex: [1, 1], kind: 'factory', owner: 'red', garrison: [] }],
     );
     expect(() => reduce(data, state, { type: 'capture', unitId: 1 })).toThrow(/占領できません/);
   });
@@ -109,186 +109,194 @@ describe('占領（第4.6章）', () => {
         { at: [1, 1], type: 'infantry', owner: 'red' },
         { at: [2, 2], type: 'infantry', owner: 'blue' },
       ],
-      [{ hex: [1, 1], kind: 'factory', owner: 'red', queue: [], interval: 0 }],
+      [{ hex: [1, 1], kind: 'factory', owner: 'red', garrison: [] }],
     );
     expect(() => reduce(data, state, { type: 'capture', unitId: 1 })).toThrow(/すでに占領/);
   });
 
-  it('占領した瞬間から増援の時計が動き出す', () => {
+  it('占領すると中身ごと相手のものになる', () => {
     const { data, state } = build(
       ['rrr', 'rFr', 'rrr'],
       [
         { at: [1, 1], type: 'infantry', owner: 'red' },
         { at: [2, 2], type: 'infantry', owner: 'blue' },
       ],
-      [{ hex: [1, 1], kind: 'factory', owner: null, queue: ['mbt'], interval: 3 }],
+      [{ hex: [1, 1], kind: 'factory', owner: null, garrison: ['mbt'] }],
     );
-    expect(facilityAt(state, at(1, 1))?.nextSpawnTurn).toBeNull();
     const result = reduce(data, state, { type: 'capture', unitId: 1 });
-    expect(facilityAt(result.state, at(1, 1))?.nextSpawnTurn).toBe(state.turn + 3);
+    const facility = facilityAt(result.state, at(1, 1))!;
+    expect(facility.owner).toBe('red');
+    expect(facility.garrison.map((stored) => stored.type)).toEqual(['mbt']);
+    expect(result.events[0]).toMatchObject({ type: 'facilityCaptured', garrisonTaken: 1 });
+    // 奪ったその場では出せない。搬出は次のターンから
+    expect(facility.garrison.every((stored) => stored.hasActed)).toBe(true);
   });
 });
 
-describe('増援（第4.6章）', () => {
-  it('間隔ターンごとにキューの先頭が隣接ヘクスへ出現する', () => {
-    const { data, state } = build(
+describe('格納と搬出（第4.6章）', () => {
+  /** 工場に赤の駒が1つ乗っている盤。 */
+  function onFactory(strength: number, type: UnitTypeId = 'mbt') {
+    return build(
       ['rrr', 'rFr', 'rrr'],
-      [{ at: [2, 2], type: 'infantry', owner: 'blue' }],
-      [{ hex: [1, 1], kind: 'factory', owner: 'red', queue: ['mbt', 'infantry'], interval: 1 }],
+      [
+        { at: [1, 1], type, owner: 'red', strength },
+        { at: [2, 2], type: 'infantry', owner: 'blue' },
+      ],
+      [{ hex: [1, 1], kind: 'factory', owner: 'red', garrison: [] }],
     );
-    // 出現ターンに達していなければ何も起きない
-    expect(spawnReinforcements(data, state, 'red').spawned).toHaveLength(0);
+  }
 
-    const ready: GameState = { ...state, turn: 2 };
-    const result = spawnReinforcements(data, ready, 'red');
-    expect(result.spawned).toHaveLength(1);
+  it('自軍施設に格納すると盤上から消え、中で全快する', () => {
+    const { data, state } = onFactory(3);
+    const result = reduce(data, state, { type: 'store', unitId: 1 });
 
-    const spawned = result.spawned[0]!.unit;
-    expect(spawned.type).toBe('mbt');
-    expect(spawned.strength).toBe(10);
-    expect(spawned.exp).toBe(0);
-    // 出現したターンは行動済み
-    expect(spawned.hasActed).toBe(true);
-    // キューが減り、次の出現予定が入る
-    const facility = facilityAt(result.state, at(1, 1))!;
-    expect(facility.queue).toEqual(['infantry']);
-    expect(facility.nextSpawnTurn).toBe(3);
+    expect(result.state.units.find((unit) => unit.id === 1)).toBeUndefined();
+    const garrison = facilityAt(result.state, at(1, 1))!.garrison;
+    expect(garrison).toHaveLength(1);
+    expect(garrison[0]).toMatchObject({ id: 1, type: 'mbt', hasActed: true });
+    expect(result.events[0]).toMatchObject({ type: 'unitStored', healed: 7 });
   });
 
-  it('出現位置は決定的で、何度計算しても同じヘクスになる', () => {
-    const scenario = (): GameState => {
-      const { data, state } = build(
-        ['rrr', 'rFr', 'rrr'],
-        [{ at: [2, 2], type: 'infantry', owner: 'blue' }],
-        [{ hex: [1, 1], kind: 'factory', owner: 'red', queue: ['mbt'], interval: 1 }],
-      );
-      return spawnReinforcements(data, { ...state, turn: 2 }, 'red').state;
+  it('格納しても熟練度は失われない', () => {
+    const { data, state } = onFactory(3);
+    const veteran: GameState = {
+      ...state,
+      units: state.units.map((unit) => (unit.id === 1 ? { ...unit, exp: 5 } : unit)),
     };
-    const first = scenario().units.find((unit) => unit.type === 'mbt')!;
-    const second = scenario().units.find((unit) => unit.type === 'mbt')!;
-    expect(hexKey(first.hex)).toBe(hexKey(second.hex));
-    // 北から時計回りに走査するので、真上が空いていればそこに出る
-    expect(toOffset(first.hex)).toEqual({ col: 1, row: 0 });
+    const stored = reduce(data, veteran, { type: 'store', unitId: 1 }).state;
+    expect(facilityAt(stored, at(1, 1))!.garrison[0]?.exp).toBe(5);
+
+    // 出したときも同じ部隊として戻ってくる
+    const ready = reduceAll(data, stored, [{ type: 'endTurn' }, { type: 'endTurn' }]).state;
+    const out = reduce(data, ready, {
+      type: 'deploy',
+      facilityHex: at(1, 1),
+      storedId: 1,
+      to: at(1, 0),
+    }).state;
+    const unit = out.units.find((item) => item.id === 1)!;
+    expect(unit.exp).toBe(5);
+    expect(unit.strength).toBe(10);
   });
 
-  it('隣接がすべて塞がっていると出現せず、キューは待機する', () => {
-    // 工場の隣接6ヘクスを敵で埋める
+  it('格納したターンには搬出できず、次のターンから出せる', () => {
+    const { data, state } = onFactory(3);
+    const stored = reduce(data, state, { type: 'store', unitId: 1 }).state;
+
+    expect(() =>
+      reduce(data, stored, { type: 'deploy', facilityHex: at(1, 1), storedId: 1, to: at(1, 0) }),
+    ).toThrow(/すでに動いています/);
+
+    // 赤 → 青 → 赤 と回すと、また出せるようになる
+    const ready = reduceAll(data, stored, [{ type: 'endTurn' }, { type: 'endTurn' }]).state;
+    expect(facilityAt(ready, at(1, 1))!.garrison[0]?.hasActed).toBe(false);
+
+    const result = reduce(data, ready, {
+      type: 'deploy',
+      facilityHex: at(1, 1),
+      storedId: 1,
+      to: at(1, 0),
+    });
+    const unit = result.state.units.find((item) => item.id === 1)!;
+    expect(toOffset(unit.hex)).toEqual({ col: 1, row: 0 });
+    // 出したターンは動かせない
+    expect(unit.hasActed).toBe(true);
+    expect(facilityAt(result.state, at(1, 1))!.garrison).toHaveLength(0);
+    expect(result.events[0]).toMatchObject({ type: 'unitDeployed', unitId: 1 });
+  });
+
+  it('隣接していないヘクスへは搬出できない', () => {
+    const { data, state } = build(
+      ['rrrrr', 'rrFrr', 'rrrrr'],
+      [{ at: [4, 2], type: 'infantry', owner: 'blue' }],
+      [{ hex: [2, 1], kind: 'factory', owner: 'red', garrison: ['mbt'] }],
+    );
+    expect(() =>
+      reduce(data, state, { type: 'deploy', facilityHex: at(2, 1), storedId: 2, to: at(4, 1) }),
+    ).toThrow(/施設の隣/);
+  });
+
+  it('隣接がすべて塞がっていると1体も出せない', () => {
     const ring = ringOf(1, 1, 3, 3);
     expect(ring).toHaveLength(6);
     const { data, state } = build(
       ['rrr', 'rFr', 'rrr'],
       ring.map((cell) => ({ at: cell, type: 'infantry', owner: 'blue' })),
-      [{ hex: [1, 1], kind: 'factory', owner: 'red', queue: ['mbt'], interval: 1 }],
+      [{ hex: [1, 1], kind: 'factory', owner: 'red', garrison: ['mbt'] }],
     );
-    const result = spawnReinforcements(data, { ...state, turn: 2 }, 'red');
-    expect(result.spawned).toHaveLength(0);
-    // キューは減らない
-    expect(facilityAt(result.state, at(1, 1))?.queue).toEqual(['mbt']);
+    const mbt = units.get('mbt')!;
+    expect(deployableHexes(data, state, at(1, 1), mbt)).toHaveLength(0);
+    expect(() =>
+      reduce(data, state, { type: 'deploy', facilityHex: at(1, 1), storedId: 7, to: at(1, 0) }),
+    ).toThrow(/塞がって/);
   });
 
-  it('ターン開始時に自動で出現する', () => {
+  it('自動では何も出てこない。出すのはプレイヤーの手番の操作', () => {
     const { data, state } = build(
       ['rrr', 'rFr', 'rrr'],
       [
         { at: [2, 2], type: 'infantry', owner: 'blue' },
         { at: [0, 2], type: 'infantry', owner: 'red' },
       ],
-      [{ hex: [1, 1], kind: 'factory', owner: 'red', queue: ['mbt'], interval: 1 }],
+      [{ hex: [1, 1], kind: 'factory', owner: 'red', garrison: ['mbt'] }],
     );
-    // 赤 → 青 → 赤 と手番を回すとターンが2になり、赤のターン開始で出現する
     const result = reduceAll(data, state, [{ type: 'endTurn' }, { type: 'endTurn' }]);
-    expect(result.state.units.some((unit) => unit.type === 'mbt')).toBe(true);
-    expect(result.events.some((event) => event.type === 'reinforcementSpawned')).toBe(true);
+    expect(result.state.units.some((unit) => unit.type === 'mbt')).toBe(false);
+    expect(facilityAt(result.state, at(1, 1))!.garrison).toHaveLength(1);
   });
-});
 
-describe('修理（第4.6章）', () => {
-  it('施設の種別ごとに直せるユニットが決まっている', () => {
+  it('施設ヘクスに乗っただけでは回復しない', () => {
+    const { data, state } = build(
+      ['rrr', 'rFr', 'rrr'],
+      [
+        { at: [1, 0], type: 'mbt', owner: 'red', strength: 3 },
+        { at: [2, 2], type: 'infantry', owner: 'blue' },
+      ],
+      [{ hex: [1, 1], kind: 'factory', owner: 'red', garrison: [] }],
+    );
+    const result = reduce(data, state, { type: 'move', unitId: 1, path: [at(1, 0), at(1, 1)] });
+    const moved = result.state.units.find((unit) => unit.id === 1)!;
+    expect(moved.strength).toBe(3);
+    // 移動しただけなので、まだ格納する行動が残っている
+    expect(moved.hasActed).toBe(false);
+  });
+
+  it('敵の施設には格納できない', () => {
+    const { data, state } = build(
+      ['rrr', 'rFr', 'rrr'],
+      [
+        { at: [1, 1], type: 'infantry', owner: 'red', strength: 3 },
+        { at: [2, 2], type: 'infantry', owner: 'blue' },
+      ],
+      [{ hex: [1, 1], kind: 'factory', owner: 'blue', garrison: [] }],
+    );
+    expect(() => reduce(data, state, { type: 'store', unitId: 1 })).toThrow(/自軍の施設/);
+  });
+
+  it('施設の種別ごとに格納できるユニットが決まっている', () => {
     const mbt = units.get('mbt')!;
     const destroyer = units.get('destroyer')!;
     const fighter = units.get('fighter')!;
 
-    expect(repairsUnit('factory', mbt)).toBe(true);
-    expect(repairsUnit('factory', destroyer)).toBe(false);
-    expect(repairsUnit('factory', fighter)).toBe(false);
-    expect(repairsUnit('port', destroyer)).toBe(true);
-    expect(repairsUnit('airfield', fighter)).toBe(true);
-    expect(repairsUnit('hq', mbt)).toBe(true);
+    expect(accepts('factory', mbt)).toBe(true);
+    expect(accepts('factory', destroyer)).toBe(false);
+    expect(accepts('factory', fighter)).toBe(false);
+    expect(accepts('port', destroyer)).toBe(true);
+    expect(accepts('airfield', fighter)).toBe(true);
+    expect(accepts('hq', mbt)).toBe(true);
   });
 
-  it('自軍施設に入ると即時全快し、その時点で行動終了になる', () => {
+  it('工場に艦艇は格納できない', () => {
     const { data, state } = build(
-      ['rrr', 'rFr', 'rrr'],
+      ['rrr', 'rFr', 'rrs'],
       [
-        { at: [1, 0], type: 'mbt', owner: 'red', strength: 3 },
-        { at: [2, 2], type: 'infantry', owner: 'blue' },
+        { at: [1, 1], type: 'infantry', owner: 'red' },
+        { at: [2, 2], type: 'destroyer', owner: 'blue' },
       ],
-      [{ hex: [1, 1], kind: 'factory', owner: 'red', queue: [], interval: 0 }],
+      [{ hex: [1, 1], kind: 'factory', owner: 'red', garrison: [] }],
     );
-    const result = reduce(data, state, {
-      type: 'move',
-      unitId: 1,
-      path: [at(1, 0), at(1, 1)],
-    });
-    const repaired = result.state.units.find((unit) => unit.id === 1)!;
-    expect(repaired.strength).toBe(10);
-    expect(repaired.hasActed).toBe(true);
-    expect(result.events.some((event) => event.type === 'unitRepaired')).toBe(true);
-  });
-
-  it('満タンの駒は施設に入っても行動終了にならない', () => {
-    const { data, state } = build(
-      ['rrr', 'rFr', 'rrr'],
-      [
-        { at: [1, 0], type: 'mbt', owner: 'red', strength: 10 },
-        { at: [2, 2], type: 'infantry', owner: 'blue' },
-      ],
-      [{ hex: [1, 1], kind: 'factory', owner: 'red', queue: [], interval: 0 }],
-    );
-    const result = reduce(data, state, {
-      type: 'move',
-      unitId: 1,
-      path: [at(1, 0), at(1, 1)],
-    });
-    expect(result.state.units.find((unit) => unit.id === 1)?.hasActed).toBe(false);
-  });
-
-  it('敵の施設では修理できない', () => {
-    const { data, state } = build(
-      ['rrr', 'rFr', 'rrr'],
-      [
-        { at: [1, 0], type: 'infantry', owner: 'red', strength: 3 },
-        { at: [2, 2], type: 'infantry', owner: 'blue' },
-      ],
-      [{ hex: [1, 1], kind: 'factory', owner: 'blue', queue: [], interval: 0 }],
-    );
-    const result = reduce(data, state, {
-      type: 'move',
-      unitId: 1,
-      path: [at(1, 0), at(1, 1)],
-    });
-    expect(result.state.units.find((unit) => unit.id === 1)?.strength).toBe(3);
-  });
-
-  it('熟練度は修理で失われない', () => {
-    const { data, state } = build(
-      ['rrr', 'rFr', 'rrr'],
-      [
-        { at: [1, 0], type: 'mbt', owner: 'red', strength: 3 },
-        { at: [2, 2], type: 'infantry', owner: 'blue' },
-      ],
-      [{ hex: [1, 1], kind: 'factory', owner: 'red', queue: [], interval: 0 }],
-    );
-    const veteran: GameState = {
-      ...state,
-      units: state.units.map((unit) => (unit.id === 1 ? { ...unit, exp: 5 } : unit)),
-    };
-    const result = reduce(data, veteran, {
-      type: 'move',
-      unitId: 1,
-      path: [at(1, 0), at(1, 1)],
-    });
-    expect(result.state.units.find((unit) => unit.id === 1)?.exp).toBe(5);
+    // 歩兵は入れる。駆逐艦はそもそも工場ヘクスに立てない
+    expect(() => reduce(data, state, { type: 'store', unitId: 1 })).not.toThrow();
   });
 });
 
@@ -314,8 +322,8 @@ describe('勝敗判定（第4.8章）', () => {
         { at: [2, 2], type: 'infantry', owner: 'blue' },
       ],
       [
-        { hex: [1, 1], kind: 'hq', owner: 'blue', queue: [], interval: 0 },
-        { hex: [0, 0], kind: 'hq', owner: 'red', queue: [], interval: 0 },
+        { hex: [1, 1], kind: 'hq', owner: 'blue', garrison: [] },
+        { hex: [0, 0], kind: 'hq', owner: 'red', garrison: [] },
       ],
       { victory: ['hq'] },
     );

@@ -6,7 +6,7 @@
  */
 
 import type { GameData } from './map';
-import { type Facility, type FactionId, type GameState, type Unit, type UnitId } from './types';
+import { type Facility, type GameState, type StoredUnit, type Unit, type UnitId } from './types';
 
 /** 最初の手番は `factions` の先頭。マップ JSON の並びが先手・後手を決める。 */
 export function createInitialState(data: GameData): GameState {
@@ -24,14 +24,17 @@ export function createInitialState(data: GameData): GameState {
     carriedBy: null,
   }));
 
-  const facilities: Facility[] = data.map.facilities.map((facility) => ({
-    hex: facility.hex,
-    kind: facility.kind,
-    owner: facility.owner,
-    queue: facility.queue,
-    interval: facility.interval,
-    nextSpawnTurn: nextSpawnTurnFor(facility.owner, facility.queue.length, facility.interval, 1),
-  }));
+  // 格納されているユニットにも盤上と同じ ID 空間から番号を振る。
+  // 搬出して戻したときに「同じ部隊」として熟練度を引き継げるようにするため。
+  let nextUnitId = units.length + 1;
+  const facilities: Facility[] = data.map.facilities.map((facility) => {
+    const garrison: StoredUnit[] = facility.garrison.map((type) => {
+      const stored: StoredUnit = { id: nextUnitId, type, exp: 0, hasActed: false };
+      nextUnitId += 1;
+      return stored;
+    });
+    return { hex: facility.hex, kind: facility.kind, owner: facility.owner, garrison };
+  });
 
   const first = data.map.factions[0];
   if (first === undefined) {
@@ -47,23 +50,9 @@ export function createInitialState(data: GameData): GameState {
     victory: data.map.victory,
     units,
     facilities,
-    nextUnitId: units.length + 1,
+    nextUnitId,
     outcome: null,
   };
-}
-
-/**
- * 次に増援が出るターン。所有者がいて、キューが残っていて、間隔が設定されているときだけ動く。
- * 敵味方を問わず参照できる値として持つ（第4.6章）。
- */
-export function nextSpawnTurnFor(
-  owner: FactionId | null,
-  queueLength: number,
-  interval: number,
-  fromTurn: number,
-): number | null {
-  if (owner === null || queueLength === 0 || interval <= 0) return null;
-  return fromTurn + interval;
 }
 
 export function findUnit(state: GameState, id: UnitId): Unit | undefined {

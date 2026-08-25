@@ -17,17 +17,17 @@
 
 import { validateCommand, type Command } from './commands';
 import { forecastCombat, type CombatForecast } from './combat';
-import { facilityAt, repairAvailableAt, spawnReinforcements } from './facility';
+import { facilityAt, replaceFacility } from './facility';
 import type { Hex } from './hex';
 import { unitDef, type GameData } from './map';
 import { pathCost } from './movement';
-import { nextSpawnTurnFor } from './state';
 import {
   MAX_STRENGTH,
   type FacilityKind,
   type FactionId,
   type GameState,
   type Outcome,
+  type StoredUnit,
   type Unit,
   type UnitId,
   type UnitTypeId,
@@ -51,18 +51,28 @@ export type GameEvent =
       readonly damageToAttacker: number;
     }
   | { readonly type: 'unitDestroyed'; readonly unitId: UnitId; readonly hex: Hex }
-  | { readonly type: 'unitRepaired'; readonly unitId: UnitId; readonly hex: Hex }
   | {
       readonly type: 'facilityCaptured';
       readonly hex: Hex;
       readonly kind: FacilityKind;
       readonly owner: FactionId;
+      /** 中身ごと手に入れた場合の体数。 */
+      readonly garrisonTaken: number;
     }
   | {
-      readonly type: 'reinforcementSpawned';
+      readonly type: 'unitStored';
       readonly unitId: UnitId;
       readonly unitType: UnitTypeId;
       readonly hex: Hex;
+      /** 格納と同時に回復した戦力。0 なら無傷のまま入った。 */
+      readonly healed: number;
+    }
+  | {
+      readonly type: 'unitDeployed';
+      readonly unitId: UnitId;
+      readonly unitType: UnitTypeId;
+      readonly from: Hex;
+      readonly to: Hex;
     }
   | { readonly type: 'unitWaited'; readonly unitId: UnitId }
   | {
@@ -102,10 +112,14 @@ function apply(data: GameData, state: GameState, command: Command): ReduceResult
       return applyAttack(data, state, command.unitId, command.targetId);
     case 'capture':
       return applyCapture(state, command.unitId);
+    case 'store':
+      return applyStore(state, command.unitId);
+    case 'deploy':
+      return applyDeploy(state, command.facilityHex, command.storedId, command.to);
     case 'wait':
-      return applyWait(data, state, command.unitId);
+      return applyWait(state, command.unitId);
     case 'endTurn':
-      return applyEndTurn(data, state);
+      return applyEndTurn(state);
     default:
       throw new CommandError('未知のコマンドです');
   }
@@ -148,16 +162,11 @@ function applyMove(
   const destination = path.at(-1) ?? unit.hex;
   const cost = pathCost(data, unitDef(data, unit.type), path);
 
-  let moved: Unit = { ...unit, hex: destination, hasMoved: true };
+  // 施設ヘクスに乗っただけでは回復しない。修理は `store` を経由する（第4.6章）
+  const moved: Unit = { ...unit, hex: destination, hasMoved: true };
   const events: GameEvent[] = [
     { type: 'unitMoved', unitId, from: unit.hex, to: destination, path: [...path], cost },
   ];
-
-  // 自軍施設に入ると即時全快し、その時点で行動終了になる（第4.6章）
-  if (moved.strength < MAX_STRENGTH && repairAvailableAt(data, state, moved, destination)) {
-    moved = { ...moved, strength: MAX_STRENGTH, hasActed: true };
-    events.push({ type: 'unitRepaired', unitId, hex: destination });
-  }
 
   return { state: { ...state, units: replaceUnit(state.units, moved) }, events };
 }
@@ -224,57 +233,140 @@ function applyAttack(
   return { state: { ...state, units }, events };
 }
 
+/**
+ * 占領（第4.6章）。
+ *
+ * 施設は攻撃できないので、中身が失われることはない。
+ * そのかわり**占領されると中身ごと相手のものになる。**
+ * 前線の施設に部隊を預けるのは、それ自体が賭けになる。
+ *
+ * 奪った中身はその場では出せない（`hasActed` を立てる）。搬出は次のターンから。
+ */
 function applyCapture(state: GameState, unitId: UnitId): ReduceResult {
   const unit = requireUnit(state, unitId);
   const facility = facilityAt(state, unit.hex);
   if (facility === undefined) throw new CommandError('このヘクスに施設はありません');
 
-  const captured = {
-    ...facility,
+  const facilities = replaceFacility(state.facilities, facility.hex, (item) => ({
+    ...item,
     owner: unit.owner,
-    // 占領した瞬間から増援の時計が動き出す
-    nextSpawnTurn: nextSpawnTurnFor(
-      unit.owner,
-      facility.queue.length,
-      facility.interval,
-      state.turn,
-    ),
-  };
-
+    garrison: item.garrison.map((stored) => ({ ...stored, hasActed: true })),
+  }));
   const units = replaceUnit(state.units, { ...unit, hasMoved: true, hasActed: true });
-  const facilities = state.facilities.map((item) => (item === facility ? captured : item));
 
   return {
     state: { ...state, units, facilities },
     events: [
-      { type: 'facilityCaptured', hex: facility.hex, kind: facility.kind, owner: unit.owner },
+      {
+        type: 'facilityCaptured',
+        hex: facility.hex,
+        kind: facility.kind,
+        owner: unit.owner,
+        garrisonTaken: facility.garrison.length,
+      },
     ],
   };
 }
 
-function applyWait(data: GameData, state: GameState, unitId: UnitId): ReduceResult {
+/**
+ * 格納（第4.6章）。
+ *
+ * 盤上から消えて施設の中に入り、その場で全快する。行動は終了する。
+ * 熟練度は保持され、収容数に上限はない。
+ */
+function applyStore(state: GameState, unitId: UnitId): ReduceResult {
   const unit = requireUnit(state, unitId);
-  let waited: Unit = { ...unit, hasMoved: true, hasActed: true };
-  const events: GameEvent[] = [{ type: 'unitWaited', unitId }];
+  const facility = facilityAt(state, unit.hex);
+  if (facility === undefined) throw new CommandError('このヘクスに施設はありません');
 
-  // その場で行動を終えた先が自軍施設なら修理を受ける
-  if (waited.strength < MAX_STRENGTH && repairAvailableAt(data, state, waited)) {
-    waited = { ...waited, strength: MAX_STRENGTH };
-    events.push({ type: 'unitRepaired', unitId, hex: waited.hex });
-  }
+  const stored: StoredUnit = {
+    id: unit.id,
+    type: unit.type,
+    exp: unit.exp,
+    // 格納したターンはもう動かせない。搬出できるのは次のターンから
+    hasActed: true,
+  };
 
-  return { state: { ...state, units: replaceUnit(state.units, waited) }, events };
+  const facilities = replaceFacility(state.facilities, facility.hex, (item) => ({
+    ...item,
+    garrison: [...item.garrison, stored],
+  }));
+  const units = state.units.filter((item) => item.id !== unitId);
+
+  return {
+    state: { ...state, units, facilities },
+    events: [
+      {
+        type: 'unitStored',
+        unitId,
+        unitType: unit.type,
+        hex: facility.hex,
+        healed: MAX_STRENGTH - unit.strength,
+      },
+    ],
+  };
+}
+
+/**
+ * 搬出（第4.6章）。
+ *
+ * 施設の隣接ヘクスへ全快の状態で出る。出したターンは行動終了なので、動かせるのは次のターン。
+ * 隣接がすべて塞がっていれば1体も出せない。
+ */
+function applyDeploy(state: GameState, facilityHex: Hex, storedId: UnitId, to: Hex): ReduceResult {
+  const facility = facilityAt(state, facilityHex);
+  if (facility === undefined) throw new CommandError('このヘクスに施設はありません');
+  const stored = facility.garrison.find((item) => item.id === storedId);
+  if (stored === undefined) throw new CommandError('その施設にそのユニットは入っていません');
+
+  const unit: Unit = {
+    id: stored.id,
+    type: stored.type,
+    owner: facility.owner ?? state.activeFaction,
+    hex: to,
+    strength: MAX_STRENGTH,
+    exp: stored.exp,
+    hasMoved: true,
+    hasActed: true,
+    reloading: 0,
+    cargo: [],
+    carriedBy: null,
+  };
+
+  const facilities = replaceFacility(state.facilities, facilityHex, (item) => ({
+    ...item,
+    garrison: item.garrison.filter((entry) => entry.id !== storedId),
+  }));
+
+  return {
+    state: { ...state, units: [...state.units, unit], facilities },
+    events: [
+      { type: 'unitDeployed', unitId: stored.id, unitType: stored.type, from: facilityHex, to },
+    ],
+  };
+}
+
+function applyWait(state: GameState, unitId: UnitId): ReduceResult {
+  const unit = requireUnit(state, unitId);
+  const waited: Unit = { ...unit, hasMoved: true, hasActed: true };
+  return {
+    state: { ...state, units: replaceUnit(state.units, waited) },
+    events: [{ type: 'unitWaited', unitId }],
+  };
 }
 
 /**
  * 手番を次の陣営へ渡す（第4.2章）。
  *
  * ターン開始フェーズはこの中で行う。
- * 1. 占領済み施設からの増援を出現させる
- * 2. 再装填中のユニットの状態を解除する
- * 3. 全ユニットの行動済みフラグをリセットする
+ * 1. 再装填中のユニットの状態を解除する
+ * 2. 盤上のユニットの行動済みフラグをリセットする
+ * 3. **自軍施設に格納されているユニットも**同じようにリセットする。
+ *    これで、前のターンに格納したユニットが今ターンから搬出できるようになる
+ *
+ * 自動で出現する増援はない。中身は手番のプレイヤーが `deploy` で出す。
  */
-function applyEndTurn(data: GameData, state: GameState): ReduceResult {
+function applyEndTurn(state: GameState): ReduceResult {
   const index = state.factions.indexOf(state.activeFaction);
   const nextIndex = (index + 1) % state.factions.length;
   const nextFaction = state.factions[nextIndex];
@@ -294,25 +386,23 @@ function applyEndTurn(data: GameData, state: GameState): ReduceResult {
       : unit,
   );
 
+  const facilities = state.facilities.map((facility) =>
+    facility.owner === nextFaction && facility.garrison.length > 0
+      ? {
+          ...facility,
+          garrison: facility.garrison.map((stored) => ({ ...stored, hasActed: false })),
+        }
+      : facility,
+  );
+
   const events: GameEvent[] = [
     { type: 'turnEnded', faction: state.activeFaction, nextFaction, turn },
   ];
 
-  const spawn = spawnReinforcements(
-    data,
-    { ...state, turn, activeFaction: nextFaction, units },
-    nextFaction,
-  );
-  for (const entry of spawn.spawned) {
-    events.push({
-      type: 'reinforcementSpawned',
-      unitId: entry.unit.id,
-      unitType: entry.unit.type,
-      hex: entry.unit.hex,
-    });
-  }
-
-  return { state: spawn.state, events };
+  return {
+    state: { ...state, turn, activeFaction: nextFaction, units, facilities },
+    events,
+  };
 }
 
 function requireUnit(state: GameState, unitId: UnitId): Unit {

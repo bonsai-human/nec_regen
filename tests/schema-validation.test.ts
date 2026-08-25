@@ -87,16 +87,16 @@ describe('マップの検証', () => {
           ['sea', 'sea', 'sea', 'sea', 'sea'],
         ],
         units: [],
-        facilities: [{ hex: [2, 1], kind: 'factory', owner: 'red', queue: ['mbt'], interval: 3 }],
+        facilities: [{ hex: [2, 1], kind: 'factory', owner: 'red', garrison: ['mbt'] }],
       }),
     );
-    expect(issues.join('\n')).toContain('主力戦車 が出現できる隣接ヘクスがありません');
+    expect(issues.join('\n')).toContain('主力戦車 を搬出できる隣接ヘクスがありません');
   });
 
   it('施設と地形の食い違いを弾く', () => {
     const issues = issuesOf(
       baseMap({
-        facilities: [{ hex: [2, 1], kind: 'factory', owner: 'red', queue: [], interval: 0 }],
+        facilities: [{ hex: [2, 1], kind: 'factory', owner: 'red', garrison: [] }],
       }),
     );
     expect(issues.join('\n')).toContain('地形 plain の上に factory は置けません');
@@ -113,7 +113,7 @@ describe('マップの検証', () => {
         tiles,
         victory: ['hq'],
         units: [],
-        facilities: [{ hex: [0, 0], kind: 'hq', owner: 'red', queue: [], interval: 0 }],
+        facilities: [{ hex: [0, 0], kind: 'hq', owner: 'red', garrison: [] }],
       }),
     );
     expect(issues.join('\n')).toContain('陣営 blue の司令部がない');
@@ -128,7 +128,7 @@ describe('マップの検証', () => {
     const issues = issuesOf(
       baseMap({
         tiles,
-        facilities: [{ hex: [0, 0], kind: 'factory', owner: null, queue: [], interval: 0 }],
+        facilities: [{ hex: [0, 0], kind: 'factory', owner: null, garrison: [] }],
         units: [{ hex: [0, 0], type: 'mbt', owner: 'red', strength: 10 }],
       }),
     );
@@ -189,7 +189,7 @@ describe('マップの検証', () => {
     expect(issues.join('\n')).toContain('5 列必要ですが 2 列あります');
   });
 
-  it('増援キューの不備を弾く', () => {
+  it('施設の中身の不備を弾く', () => {
     const tiles = [
       ['factory', 'plain', 'plain', 'plain', 'plain'],
       ['plain', 'plain', 'plain', 'plain', 'plain'],
@@ -199,23 +199,22 @@ describe('マップの検証', () => {
       baseMap({
         tiles,
         units: [],
-        facilities: [
-          { hex: [0, 0], kind: 'factory', owner: 'red', queue: ['nonexistent'], interval: 3 },
-        ],
+        facilities: [{ hex: [0, 0], kind: 'factory', owner: 'red', garrison: ['nonexistent'] }],
       }),
     );
     expect(unknownType.join('\n')).toContain('存在しないユニット種別です: nonexistent');
 
-    const noInterval = issuesOf(
+    // 出現間隔という概念はない。施設は格納庫なので、中身の指定だけで完結する
+    const legacy = issuesOf(
       baseMap({
         tiles,
         units: [],
         facilities: [
-          { hex: [0, 0], kind: 'factory', owner: 'red', queue: ['infantry'], interval: 0 },
+          { hex: [0, 0], kind: 'factory', owner: 'red', garrison: ['infantry'], interval: 3 },
         ],
       }),
     );
-    expect(noInterval.join('\n')).toContain('1以上の出現間隔が必要です');
+    expect(legacy.join('\n')).toContain('map.facilities[0].interval: 未知のフィールドです');
   });
 
   it('未知のフィールドと未知の陣営を弾く', () => {

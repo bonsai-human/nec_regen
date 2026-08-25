@@ -143,10 +143,11 @@ export interface FacilityDef {
   readonly kind: FacilityKind;
   /** null は中立（未占領）。 */
   readonly owner: FactionId | null;
-  /** 増援キュー。先頭から順に出現し、尽きたら以降は出ない。 */
-  readonly queue: readonly UnitTypeId[];
-  /** 増援の出現間隔（ターン）。0 なら増援を出さない。 */
-  readonly interval: number;
+  /**
+   * 開始時点で施設の中に格納されているユニット。
+   * 施設は生産設備ではなく**格納庫**なので、これが中身のすべてになる。
+   */
+  readonly garrison: readonly UnitTypeId[];
 }
 
 /** ユニットの初期配置（マップ JSON の `units`）。 */
@@ -221,19 +222,33 @@ export interface Unit {
   readonly carriedBy: UnitId | null;
 }
 
+/**
+ * 施設に格納されているユニット。盤上には出ていないので、
+ * 攻撃も支援も包囲もされない。取り出すには `deploy` が要る。
+ */
+export interface StoredUnit {
+  readonly id: UnitId;
+  readonly type: UnitTypeId;
+  /** 格納しても熟練度は失われない。同一の部隊が補充を受けたものと見なす（第4.6章）。 */
+  readonly exp: number;
+  /**
+   * このターンすでに格納・搬出に関わったか。
+   * 格納した直後は `true` なので、**搬出できるのは次のターン以降**になる。
+   */
+  readonly hasActed: boolean;
+}
+
 /** 施設1つの状態。 */
 export interface Facility {
   readonly hex: Hex;
   readonly kind: FacilityKind;
   readonly owner: FactionId | null;
-  /** 残りの増援キュー。先頭が次に出現する。 */
-  readonly queue: readonly UnitTypeId[];
-  readonly interval: number;
   /**
-   * 次に増援が出現するターン。
-   * 敵味方を問わず参照できる（第4.6章）ため、UI から常に読める値として持つ。
+   * 中に格納されているユニット。収容数に上限はない。
+   * 敵味方を問わず中身を参照できる（第4.6章）ため、隠さずに持つ。
+   * 施設が占領されると、中身もそのまま新しい所有者のものになる。
    */
-  readonly nextSpawnTurn: number | null;
+  readonly garrison: readonly StoredUnit[];
 }
 
 /** 決着の内容（第4.8章）。 */
@@ -256,7 +271,7 @@ export interface GameState {
   readonly victory: readonly VictoryCondition[];
   readonly units: readonly Unit[];
   readonly facilities: readonly Facility[];
-  /** 次に払い出すユニット ID。増援で使う。 */
+  /** 次に払い出すユニット ID。 */
   readonly nextUnitId: UnitId;
   readonly outcome: Outcome | null;
 }

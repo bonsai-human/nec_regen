@@ -1,20 +1,30 @@
 /**
- * 施設の占領・増援・修理（実装計画書 第4.6章）。
+ * 施設の占領・格納・搬出（実装計画書 第4.6章）。
  *
- * 生産は存在せず、ユニットの供給源はマップ初期配置と施設の増援キューだけ。
- * したがって施設は「資源を生む場所」ではなく、**盤面の主導権そのもの**になる。
+ * 生産は存在しない。**施設は生産設備ではなく格納庫**で、
+ * 中に入っているユニットを出し入れできるだけ。出し切れば空になる。
+ *
+ * 修理はこの格納庫を経由する形で表す。
+ *
+ * ```
+ * ターンN   : 自軍施設へ入り `store`（行動終了）。中で全快する
+ * ターンN+1 : `deploy` で隣接ヘクスへ搬出（搬出したターンは行動終了）
+ * ターンN+2 : ようやく動かせる
+ * ```
+ *
+ * 回復量ではなく**この2ターンの往復そのもの**が修理のコストになる。
+ * だから回復は段階的ではなく即時全快でよい（第4.6章の結論はこの経緯から出ている）。
  */
 
-import { DIRECTIONS, neighbors, type Hex } from './hex';
+import { neighbors, type Hex } from './hex';
 import { unitDef, type GameData } from './map';
 import { canStandOn, unitAt } from './movement';
 import {
-  MAX_STRENGTH,
   type Facility,
   type FacilityKind,
   type FactionId,
   type GameState,
-  type Unit,
+  type StoredUnit,
   type UnitDef,
   type UnitId,
 } from './types';
@@ -44,8 +54,8 @@ export function captureBlockedReason(
   return null;
 }
 
-/** その施設で修理を受けられるユニットか（工場＝地上、港＝海上、飛行場＝航空）。 */
-export function repairsUnit(kind: FacilityKind, def: UnitDef): boolean {
+/** その施設に格納できるユニットか（工場＝地上、港＝海上、飛行場＝航空）。 */
+export function accepts(kind: FacilityKind, def: UnitDef): boolean {
   const movement = def.movementType;
   const isAir = movement === 'air' || def.armorClass === 'air';
   const isNaval = movement === 'ship' || movement === 'sub';
@@ -63,103 +73,115 @@ export function repairsUnit(kind: FacilityKind, def: UnitDef): boolean {
   }
 }
 
-/** そのヘクスで修理を受けられるか。自軍が所有している施設であることが条件。 */
-export function repairAvailableAt(
+/**
+ * 格納できない理由（できるなら null）。
+ * 自軍が所有していて、その施設が受け入れられる種別であることが条件。
+ */
+export function storeBlockedReason(
   data: GameData,
   state: GameState,
-  unit: Unit,
-  hex: Hex = unit.hex,
-): boolean {
-  const facility = facilityAt(state, hex);
-  if (facility?.owner !== unit.owner) return false;
-  return repairsUnit(facility.kind, unitDef(data, unit.type));
+  unitId: UnitId,
+): string | null {
+  const unit = state.units.find((item) => item.id === unitId);
+  if (unit === undefined) return `ユニットが見つかりません: ${unitId}`;
+
+  const facility = facilityAt(state, unit.hex);
+  if (facility === undefined) return 'このヘクスに施設はありません';
+  if (facility.owner !== unit.owner) return '自軍の施設にしか格納できません';
+
+  const def = unitDef(data, unit.type);
+  if (!accepts(facility.kind, def)) {
+    return `${facilityName(facility.kind)}に ${def.name} は格納できません`;
+  }
+  // 積荷ごと格納されると中身の扱いが曖昧になるので、先に降ろさせる
+  if (unit.cargo.length > 0) return '積荷を降ろしてから格納してください';
+  return null;
 }
 
-export interface SpawnResult {
-  readonly state: GameState;
-  readonly spawned: readonly { facility: Facility; unit: Unit }[];
+/** 搬出できない理由（できるなら null）。 */
+export function deployBlockedReason(
+  data: GameData,
+  state: GameState,
+  facilityHex: Hex,
+  storedId: UnitId,
+  to: Hex,
+): string | null {
+  const facility = facilityAt(state, facilityHex);
+  if (facility === undefined) return 'このヘクスに施設はありません';
+  if (facility.owner !== state.activeFaction) return '自軍の施設ではありません';
+
+  const stored = facility.garrison.find((item) => item.id === storedId);
+  if (stored === undefined) return 'その施設にそのユニットは入っていません';
+  // 格納した直後は行動済みなので、搬出できるのは次のターンから
+  if (stored.hasActed) return 'このユニットはこのターンすでに動いています';
+
+  const def = unitDef(data, stored.type);
+  if (!isAdjacent(facilityHex, to)) return '搬出先は施設の隣でなければなりません';
+  if (!canStandOn(data, def, to)) return `${def.name} はそのヘクスに出られません`;
+  if (unitAt(state, to) !== undefined) return '搬出先が塞がっています';
+  return null;
 }
 
 /**
- * ターン開始時の増援（第4.6章）。
+ * 搬出できるヘクス。施設の隣接6ヘクスのうち、空いていて地形が許すもの。
  *
- * - 出現位置は**決定的**に決める（隣接ヘクスを固定の方向順に走査し、最初の空きヘクス）
- * - **隣接がすべて塞がっていれば出現せず、キューはその場で待機する。**
- *   敵工場の出口を囲んで増援を止めるのが有効な戦術になる
- * - 出現したユニットは戦力10・熟練度0で、そのターンは行動済み
+ * **隣接がすべて塞がっていれば1体も出せない**ので、
+ * 敵施設の周囲を固めて中身を閉じ込めるのが有効な戦術になる（第4.6章）。
  */
-export function spawnReinforcements(
-  data: GameData,
-  state: GameState,
-  faction: FactionId,
-): SpawnResult {
-  const spawned: { facility: Facility; unit: Unit }[] = [];
-  let nextUnitId = state.nextUnitId;
-  let units = [...state.units];
-
-  const facilities = state.facilities.map((facility) => {
-    if (facility.owner !== faction) return facility;
-    if (facility.queue.length === 0 || facility.nextSpawnTurn === null) return facility;
-    if (state.turn < facility.nextSpawnTurn) return facility;
-
-    const type = facility.queue[0];
-    if (type === undefined) return facility;
-    const def = data.units.get(type);
-    if (def === undefined) return facility;
-
-    const hex = findSpawnHex(data, { ...state, units }, facility.hex, def);
-    // 出口が塞がっていれば、キューを消費せずに待つ
-    if (hex === null) return facility;
-
-    const unit: Unit = {
-      id: nextUnitId,
-      type,
-      owner: faction,
-      hex,
-      strength: MAX_STRENGTH,
-      exp: 0,
-      hasMoved: true,
-      hasActed: true,
-      reloading: 0,
-      cargo: [],
-      carriedBy: null,
-    };
-    nextUnitId += 1;
-    units = [...units, unit];
-
-    const queue = facility.queue.slice(1);
-    const updated: Facility = {
-      ...facility,
-      queue,
-      nextSpawnTurn: queue.length > 0 ? state.turn + facility.interval : null,
-    };
-    spawned.push({ facility: updated, unit });
-    return updated;
-  });
-
-  if (spawned.length === 0) return { state, spawned };
-  return { state: { ...state, units, facilities, nextUnitId }, spawned };
-}
-
-/**
- * 出現できる最初の隣接ヘクス。`DIRECTIONS`（北から時計回り）の順に走査する。
- * この順序を変えると、既存のリプレイが再現しなくなる。
- */
-function findSpawnHex(
+export function deployableHexes(
   data: GameData,
   state: GameState,
   facilityHex: Hex,
   def: UnitDef,
-): Hex | null {
-  const around = neighbors(facilityHex);
-  for (let i = 0; i < DIRECTIONS.length; i++) {
-    const hex = around[i];
-    if (hex === undefined) continue;
-    if (!canStandOn(data, def, hex)) continue;
-    if (unitAt(state, hex) !== undefined) continue;
-    return hex;
+): Hex[] {
+  return neighbors(facilityHex).filter(
+    (hex) => canStandOn(data, def, hex) && unitAt(state, hex) === undefined,
+  );
+}
+
+function isAdjacent(from: Hex, to: Hex): boolean {
+  return neighbors(from).some((hex) => hex.q === to.q && hex.r === to.r);
+}
+
+export function facilityName(kind: FacilityKind): string {
+  switch (kind) {
+    case 'factory':
+      return '工場';
+    case 'hq':
+      return '司令部';
+    case 'port':
+      return '港';
+    case 'airfield':
+      return '飛行場';
+    default:
+      return kind;
   }
-  return null;
+}
+
+/** 施設の中身をひとまとめに扱うための入れ替え。 */
+export function replaceFacility(
+  facilities: readonly Facility[],
+  hex: Hex,
+  next: (facility: Facility) => Facility,
+): Facility[] {
+  return facilities.map((facility) =>
+    facility.hex.q === hex.q && facility.hex.r === hex.r ? next(facility) : facility,
+  );
+}
+
+/** ある陣営が搬出できる状態の格納ユニットを、施設ごとに列挙する。 */
+export function readyGarrison(
+  state: GameState,
+  faction: FactionId,
+): { facility: Facility; stored: StoredUnit }[] {
+  const found: { facility: Facility; stored: StoredUnit }[] = [];
+  for (const facility of state.facilities) {
+    if (facility.owner !== faction) continue;
+    for (const stored of facility.garrison) {
+      if (!stored.hasActed) found.push({ facility, stored });
+    }
+  }
+  return found;
 }
 
 /** 各陣営が所有している施設の数。ターン制限時の判定に使う。 */

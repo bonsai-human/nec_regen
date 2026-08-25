@@ -41,8 +41,14 @@ export function evaluateVictory(data: GameData, state: GameState): Outcome | nul
 
   // 1. 全滅
   if (state.victory.includes('annihilation')) {
-    const alive = state.factions.filter((faction) =>
-      state.units.some((unit) => unit.owner === faction),
+    // 施設に格納しているユニットは撃破されたわけではない。
+    // 出せる駒が残っている限り全滅ではない（第4.6章）
+    const alive = state.factions.filter(
+      (faction) =>
+        state.units.some((unit) => unit.owner === faction) ||
+        state.facilities.some(
+          (facility) => facility.owner === faction && facility.garrison.length > 0,
+        ),
     );
     if (alive.length === 1) return { winner: alive[0] ?? null, reason: 'annihilation' };
     if (alive.length === 0) return { winner: null, reason: 'draw' };

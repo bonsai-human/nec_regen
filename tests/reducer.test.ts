@@ -53,14 +53,16 @@ describe('初期状態', () => {
     const state = createInitialState(loadGameData('map01_crossroads'));
     expect(state.units).toHaveLength(20);
     expect(state.facilities).toHaveLength(10);
-    // 中立の工場は増援の予定を持たない
+    // 中立の工場にも中身は入っている。誰でも読める（第4.6章）
     const neutral = state.facilities.filter((facility) => facility.owner === null);
-    expect(neutral.every((facility) => facility.nextSpawnTurn === null)).toBe(true);
-    // 所有されている工場は次の出現ターンを持つ（誰でも読める・第4.6章）
-    const owned = state.facilities.filter(
-      (facility) => facility.owner !== null && facility.queue.length > 0,
+    expect(neutral).toHaveLength(4);
+    expect(neutral.every((facility) => facility.garrison.length > 0)).toBe(true);
+    // 格納ユニットにも盤上と同じ ID 空間から番号が振られている
+    const ids = state.facilities.flatMap((facility) =>
+      facility.garrison.map((stored) => stored.id),
     );
-    expect(owned.every((facility) => facility.nextSpawnTurn !== null)).toBe(true);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(Math.max(...ids)).toBeLessThan(state.nextUnitId);
   });
 });
 

@@ -23,16 +23,16 @@
     ["mountain", "mountain", "hill", "plain", "plain", "hill", "forest", "plain", "plain", "plain", "mountain", "plain", "plain", "plain", "forest", "hill", "plain", "plain", "hill", "mountain", "mountain"]
   ],
   "facilities": [
-    {"hex": [2, 6], "kind": "hq", "owner": "red", "queue": [], "interval": 0},
-    {"hex": [18, 6], "kind": "hq", "owner": "blue", "queue": [], "interval": 0},
-    {"hex": [3, 5], "kind": "factory", "owner": "red", "queue": ["infantry", "mbt"], "interval": 1},
-    {"hex": [3, 7], "kind": "factory", "owner": "red", "queue": ["infantry", "spg"], "interval": 1},
-    {"hex": [17, 5], "kind": "factory", "owner": "blue", "queue": ["infantry", "mbt"], "interval": 1},
-    {"hex": [17, 7], "kind": "factory", "owner": "blue", "queue": ["infantry", "spg"], "interval": 1},
-    {"hex": [8, 4], "kind": "factory", "owner": null, "queue": ["infantry", "mbt"], "interval": 1},
-    {"hex": [12, 4], "kind": "factory", "owner": null, "queue": ["infantry", "mbt"], "interval": 1},
-    {"hex": [8, 10], "kind": "factory", "owner": null, "queue": ["infantry", "assault_tank"], "interval": 1},
-    {"hex": [12, 10], "kind": "factory", "owner": null, "queue": ["infantry", "assault_tank"], "interval": 1}
+    {"hex": [2, 6], "kind": "hq", "owner": "red", "garrison": []},
+    {"hex": [18, 6], "kind": "hq", "owner": "blue", "garrison": []},
+    {"hex": [3, 5], "kind": "factory", "owner": "red", "garrison": ["infantry", "mbt"]},
+    {"hex": [3, 7], "kind": "factory", "owner": "red", "garrison": ["infantry", "spg"]},
+    {"hex": [17, 5], "kind": "factory", "owner": "blue", "garrison": ["infantry", "mbt"]},
+    {"hex": [17, 7], "kind": "factory", "owner": "blue", "garrison": ["infantry", "spg"]},
+    {"hex": [8, 4], "kind": "factory", "owner": null, "garrison": ["infantry", "mbt"]},
+    {"hex": [12, 4], "kind": "factory", "owner": null, "garrison": ["infantry", "mbt"]},
+    {"hex": [8, 10], "kind": "factory", "owner": null, "garrison": ["infantry", "assault_tank"]},
+    {"hex": [12, 10], "kind": "factory", "owner": null, "garrison": ["infantry", "assault_tank"]}
   ],
   "units": [
     {"hex": [4, 5], "type": "infantry", "owner": "red", "strength": 10},

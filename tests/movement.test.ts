@@ -334,7 +334,7 @@ describe('ZOC（第4.3章）', () => {
 });
 
 describe('施設への進入（第4.6章）', () => {
-  const facilities = [{ hex: [2, 0], kind: 'factory', owner: null, queue: [], interval: 0 }];
+  const facilities = [{ hex: [2, 0], kind: 'factory', owner: null, garrison: [] }];
 
   it('未占領の工場には占領できる駒しか入れない', () => {
     const tank = build(['..F..'], [{ at: [0, 0], type: 'mbt', owner: 'red' }], facilities);
@@ -345,7 +345,7 @@ describe('施設への進入（第4.6章）', () => {
   });
 
   it('自軍の工場には誰でも入れる（修理のため）', () => {
-    const owned = [{ hex: [2, 0], kind: 'factory', owner: 'red', queue: [], interval: 0 }];
+    const owned = [{ hex: [2, 0], kind: 'factory', owner: 'red', garrison: [] }];
     const tank = build(['..F..'], [{ at: [0, 0], type: 'mbt', owner: 'red' }], owned);
     expect(reachableHexes(tank.data, tank.state, 1).has(hexKey(at(2, 0)))).toBe(true);
   });

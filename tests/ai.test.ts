@@ -111,7 +111,7 @@ describe('AI v1 の行動選択（第6章）', () => {
         { at: [1, 1], type: 'infantry', owner: 'red' },
         { at: [2, 2], type: 'infantry', owner: 'blue' },
       ],
-      [{ hex: [1, 1], kind: 'factory', owner: null, queue: [], interval: 0 }],
+      [{ hex: [1, 1], kind: 'factory', owner: null, garrison: [] }],
     );
     const commands = ai.planTurn(data, state, 'red');
     expect(commands[0]).toEqual({ type: 'capture', unitId: 1 });
@@ -144,14 +144,17 @@ describe('AI v1 の行動選択（第6章）', () => {
         { at: [3, 1], type: 'mbt', owner: 'red', strength: 3 },
         { at: [11, 2], type: 'infantry', owner: 'blue' },
       ],
-      [{ hex: [1, 1], kind: 'factory', owner: 'red', queue: [], interval: 0 }],
+      [{ hex: [1, 1], kind: 'factory', owner: 'red', garrison: [] }],
     );
     const commands = ai.planTurn(data, state, 'red');
     expect(commands.some((command) => command.type === 'attack')).toBe(false);
 
     const after = reduceAll(data, state, commands).state;
-    // 工場に入って全快している
-    expect(after.units.find((unit) => unit.id === 1)?.strength).toBe(10);
+    // 工場まで下がり、中へ格納されている（盤上からは消える）
+    expect(commands.some((command) => command.type === 'store')).toBe(true);
+    expect(after.units.find((unit) => unit.id === 1)).toBeUndefined();
+    const garrison = after.facilities.find((facility) => facility.kind === 'factory')!.garrison;
+    expect(garrison.map((stored) => stored.id)).toEqual([1]);
   });
 
   it('攻撃は後退より優先される（計画書の優先順位どおり）', () => {
@@ -161,7 +164,7 @@ describe('AI v1 の行動選択（第6章）', () => {
         { at: [3, 1], type: 'mbt', owner: 'red', strength: 3 },
         { at: [4, 2], type: 'infantry', owner: 'blue' },
       ],
-      [{ hex: [1, 1], kind: 'factory', owner: 'red', queue: [], interval: 0 }],
+      [{ hex: [1, 1], kind: 'factory', owner: 'red', garrison: [] }],
     );
     const commands = ai.planTurn(data, state, 'red');
     expect(commands.some((command) => command.type === 'attack')).toBe(true);
@@ -178,7 +181,7 @@ describe('AI の決定性（第6章 決定性の要件・最重要）', () => {
         { at: [4, 1], type: 'mbt', owner: 'blue' },
         { at: [4, 2], type: 'assault_tank', owner: 'blue' },
       ],
-      [{ hex: [1, 1], kind: 'factory', owner: null, queue: [], interval: 0 }],
+      [{ hex: [1, 1], kind: 'factory', owner: null, garrison: [] }],
     );
 
   it('同じ局面には必ず同じ手を返す', () => {

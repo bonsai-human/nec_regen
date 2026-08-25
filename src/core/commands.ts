@@ -9,7 +9,7 @@
  */
 
 import { attackBlockedReason } from './combat';
-import { captureBlockedReason } from './facility';
+import { captureBlockedReason, deployBlockedReason, storeBlockedReason } from './facility';
 import type { Hex } from './hex';
 import { unitDef, type GameData } from './map';
 import { validatePath } from './movement';
@@ -19,6 +19,15 @@ export type Command =
   | { readonly type: 'move'; readonly unitId: UnitId; readonly path: readonly Hex[] }
   | { readonly type: 'attack'; readonly unitId: UnitId; readonly targetId: UnitId }
   | { readonly type: 'capture'; readonly unitId: UnitId }
+  /** 自軍施設の中へしまう。行動終了。中で全快する。 */
+  | { readonly type: 'store'; readonly unitId: UnitId }
+  /** 自軍施設の中から隣接ヘクスへ出す。出したターンは行動終了。 */
+  | {
+      readonly type: 'deploy';
+      readonly facilityHex: Hex;
+      readonly storedId: UnitId;
+      readonly to: Hex;
+    }
   | { readonly type: 'wait'; readonly unitId: UnitId }
   | { readonly type: 'endTurn' };
 
@@ -38,6 +47,10 @@ export function validateCommand(data: GameData, state: GameState, command: Comma
       return validateAttack(data, state, command.unitId, command.targetId);
     case 'capture':
       return validateCapture(data, state, command.unitId);
+    case 'store':
+      return validateStore(data, state, command.unitId);
+    case 'deploy':
+      return deployBlockedReason(data, state, command.facilityHex, command.storedId, command.to);
     case 'wait':
       return validateActor(state, command.unitId);
     case 'endTurn':
@@ -104,4 +117,10 @@ function validateCapture(data: GameData, state: GameState, unitId: UnitId): stri
   const actorError = validateActor(state, unitId);
   if (actorError !== null) return actorError;
   return captureBlockedReason(data, state, unitId);
+}
+
+function validateStore(data: GameData, state: GameState, unitId: UnitId): string | null {
+  const actorError = validateActor(state, unitId);
+  if (actorError !== null) return actorError;
+  return storeBlockedReason(data, state, unitId);
 }

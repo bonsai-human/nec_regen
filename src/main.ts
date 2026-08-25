@@ -36,6 +36,8 @@ function mount(): void {
       cancel: required<HTMLButtonElement>('#cancel'),
       undo: required<HTMLButtonElement>('#undo'),
       capture: required<HTMLButtonElement>('#capture'),
+      store: required<HTMLButtonElement>('#store'),
+      deploy: required<HTMLButtonElement>('#deploy'),
       wait: required<HTMLButtonElement>('#wait'),
       endTurn: required<HTMLButtonElement>('#end-turn'),
       zoomIn: required<HTMLButtonElement>('#zoom-in'),

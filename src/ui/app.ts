@@ -11,7 +11,12 @@
 import { GreedyAi } from '@/ai/greedy';
 import { validateCommand, type Command } from '@/core/commands';
 import { attackableTargets, forecastCombat, type CombatForecast } from '@/core/combat';
-import { captureBlockedReason, facilityAt } from '@/core/facility';
+import {
+  captureBlockedReason,
+  deployableHexes,
+  facilityAt,
+  storeBlockedReason,
+} from '@/core/facility';
 import { hexEquals, hexKey, toOffset, type Hex, type HexKey } from '@/core/hex';
 import { terrainIdAt, unitDef, type GameData } from '@/core/map';
 import { moveCostFor, reachableHexes, unitAt, type ReachableMap } from '@/core/movement';
@@ -50,6 +55,8 @@ export interface AppElements {
   readonly cancel: HTMLButtonElement;
   readonly undo: HTMLButtonElement;
   readonly capture: HTMLButtonElement;
+  readonly store: HTMLButtonElement;
+  readonly deploy: HTMLButtonElement;
   readonly wait: HTMLButtonElement;
   readonly endTurn: HTMLButtonElement;
   readonly zoomIn: HTMLButtonElement;
@@ -63,6 +70,16 @@ export interface AppElements {
 type Preview =
   | { readonly kind: 'move'; readonly path: readonly Hex[] }
   | { readonly kind: 'attack'; readonly targetId: UnitId; readonly forecast: CombatForecast };
+
+/**
+ * 搬出モード。施設の中身を1体選んで、隣接ヘクスへ出すところまでを持つ。
+ * ユニット選択とは別の状態にしておく（盤上にはまだ居ないので `Selection` では表せない）。
+ */
+interface DeploySelection {
+  readonly facilityHex: Hex;
+  readonly storedId: UnitId;
+  readonly hexes: ReadonlySet<HexKey>;
+}
 
 interface Selection {
   readonly unitId: UnitId;
@@ -79,6 +96,7 @@ export class App {
   private readonly ai = new GreedyAi();
   private state: GameState;
   private selection: Selection | null = null;
+  private deploying: DeploySelection | null = null;
   private hovered: Hex | null = null;
   private frame: number | null = null;
   private aiTimer: ReturnType<typeof setTimeout> | null = null;
@@ -167,6 +185,16 @@ export class App {
       return;
     }
 
+    // 搬出モード中は、光っているヘクスを叩けばそこへ出す
+    const deploying = this.deploying;
+    if (deploying !== null) {
+      if (deploying.hexes.has(hexKey(hex))) {
+        this.commitDeploy(deploying, hex);
+        return;
+      }
+      this.deploying = null;
+    }
+
     const selection = this.selection;
     if (selection !== null) {
       if (selection.preview !== null && this.isPreviewTarget(selection, hex)) {
@@ -196,7 +224,73 @@ export class App {
       this.select(unit.id);
       return;
     }
+
+    // 自軍施設に出せる中身があるなら、そのまま搬出モードに入る
+    if (this.beginDeploy(hex)) return;
+
     this.clearSelection();
+  }
+
+  /**
+   * 搬出モードに入る。出せる中身が無ければ何もせず false。
+   * 1体目を選んだ状態にして、出せるヘクスを光らせる。
+   */
+  private beginDeploy(hex: Hex, storedId?: UnitId): boolean {
+    if (this.isBusy() || this.state.activeFaction !== HUMAN_FACTION) return false;
+
+    const facility = facilityAt(this.state, hex);
+    if (facility?.owner !== this.state.activeFaction) return false;
+
+    const ready = facility.garrison.filter((stored) => !stored.hasActed);
+    const chosen = storedId === undefined ? ready[0] : ready.find((item) => item.id === storedId);
+    if (chosen === undefined) return false;
+
+    const def = unitDef(this.data, chosen.type);
+    const hexes = new Set(
+      deployableHexes(this.data, this.state, facility.hex, def).map((item) => hexKey(item)),
+    );
+    if (hexes.size === 0) {
+      // 出口がすべて塞がっている。なぜ出せないのかは読み取り欄で伝える
+      this.selection = null;
+      this.deploying = null;
+      this.lastReport = `${def.name} を出せる隣接ヘクスがありません`;
+      this.updatePanel();
+      this.requestRender();
+      return true;
+    }
+
+    this.selection = null;
+    this.deploying = { facilityHex: facility.hex, storedId: chosen.id, hexes };
+    this.updatePanel();
+    this.requestRender();
+    return true;
+  }
+
+  /** 搬出モードで、次の中身に切り替える。 */
+  private cycleDeploy(): void {
+    const deploying = this.deploying;
+    if (deploying === null) return;
+    const facility = facilityAt(this.state, deploying.facilityHex);
+    if (facility === undefined) return;
+
+    const ready = facility.garrison.filter((stored) => !stored.hasActed);
+    const index = ready.findIndex((stored) => stored.id === deploying.storedId);
+    const next = ready[(index + 1) % ready.length];
+    if (next === undefined) return;
+    this.beginDeploy(deploying.facilityHex, next.id);
+  }
+
+  private commitDeploy(deploying: DeploySelection, to: Hex): void {
+    const command: Command = {
+      type: 'deploy',
+      facilityHex: deploying.facilityHex,
+      storedId: deploying.storedId,
+      to,
+    };
+    this.deploying = null;
+    if (!this.dispatch(command)) return;
+    // 続けて出せるならモードを維持する。2体目以降を出すのにタップし直さなくてよい
+    this.beginDeploy(deploying.facilityHex);
   }
 
   private isPreviewTarget(selection: Selection, hex: Hex): boolean {
@@ -261,6 +355,7 @@ export class App {
 
   private clearSelection(): void {
     this.selection = null;
+    this.deploying = null;
     this.updatePanel();
     this.requestRender();
   }
@@ -334,17 +429,21 @@ export class App {
           lines.push('撃破');
           this.pushFlash(event.hex, '撃破', '#ff6a5a');
           break;
-        case 'unitRepaired':
-          lines.push('修理して全快');
-          this.pushFlash(event.hex, '全快', '#7ad18a');
-          break;
-        case 'facilityCaptured':
-          lines.push(`${this.facilityName(event.kind)}を占領`);
+        case 'facilityCaptured': {
+          const taken = event.garrisonTaken > 0 ? `（中身 ${event.garrisonTaken}体 ごと）` : '';
+          lines.push(`${this.facilityName(event.kind)}を占領${taken}`);
           this.pushFlash(event.hex, '占領', '#9ec5ff');
           break;
-        case 'reinforcementSpawned':
-          lines.push(`増援: ${unitDef(this.data, event.unitType).name}`);
-          this.pushFlash(event.hex, '増援', '#9ec5ff');
+        }
+        case 'unitStored': {
+          const name = unitDef(this.data, event.unitType).name;
+          lines.push(event.healed > 0 ? `${name} を格納（全快）` : `${name} を格納`);
+          this.pushFlash(event.hex, event.healed > 0 ? '全快' : '格納', '#7ad18a');
+          break;
+        }
+        case 'unitDeployed':
+          lines.push(`${unitDef(this.data, event.unitType).name} を搬出`);
+          this.pushFlash(event.to, '搬出', '#9ec5ff');
           break;
         case 'unitMoved':
         case 'unitWaited':
@@ -404,6 +503,12 @@ export class App {
     const selection = this.selection;
     if (selection === null) return;
     if (this.dispatch({ type: 'capture', unitId: selection.unitId })) this.clearSelection();
+  }
+
+  private storeHere(): void {
+    const selection = this.selection;
+    if (selection === null) return;
+    if (this.dispatch({ type: 'store', unitId: selection.unitId })) this.clearSelection();
   }
 
   private waitHere(): void {
@@ -498,6 +603,12 @@ export class App {
     });
     on(this.elements.capture, 'click', () => {
       this.captureHere();
+    });
+    on(this.elements.store, 'click', () => {
+      this.storeHere();
+    });
+    on(this.elements.deploy, 'click', () => {
+      this.cycleDeploy();
     });
     on(this.elements.wait, 'click', () => {
       this.waitHere();
@@ -609,8 +720,9 @@ export class App {
   // ---- 表示 ---------------------------------------------------------------
 
   private updatePanel(): void {
-    const { turnLabel, readout, confirm, cancel, undo, capture, wait, result, resultText } =
+    const { turnLabel, readout, confirm, cancel, undo, capture, store, deploy, wait } =
       this.elements;
+    const { result, resultText } = this.elements;
 
     turnLabel.textContent = `ターン ${this.state.turn} / ${this.state.turnLimit} · ${this.factionName(this.state.activeFaction)}の手番`;
 
@@ -621,7 +733,14 @@ export class App {
     undo.hidden = this.history.length === 0 || this.isBusy();
     capture.hidden =
       selection === null || captureBlockedReason(this.data, this.state, selection.unitId) !== null;
+    store.hidden =
+      selection === null ||
+      previewing ||
+      storeBlockedReason(this.data, this.state, selection.unitId) !== null;
+    // 「次の中身」は、出せる中身が2体以上あるときだけ意味がある
+    deploy.hidden = this.readyGarrisonCount() < 2;
     wait.hidden = selection === null || previewing;
+    cancel.hidden = selection === null && this.deploying === null;
 
     const outcome = this.state.outcome;
     result.hidden = outcome === null;
@@ -636,9 +755,27 @@ export class App {
     readout.textContent = this.lastReport === '' ? focus : `${this.lastReport} ｜ ${focus}`;
   }
 
+  /** 搬出モード中の施設に、まだ出せる中身が何体あるか。 */
+  private readyGarrisonCount(): number {
+    const deploying = this.deploying;
+    if (deploying === null) return 0;
+    const facility = facilityAt(this.state, deploying.facilityHex);
+    return facility?.garrison.filter((stored) => !stored.hasActed).length ?? 0;
+  }
+
   private describeFocus(): string {
     if (this.state.outcome !== null) return '決着しました';
     if (this.aiTimer !== null) return `${this.factionName(this.state.activeFaction)}の手番です…`;
+
+    const deploying = this.deploying;
+    if (deploying !== null) {
+      const facility = facilityAt(this.state, deploying.facilityHex);
+      const stored = facility?.garrison.find((item) => item.id === deploying.storedId);
+      const name = stored === undefined ? '中身' : unitDef(this.data, stored.type).name;
+      const rest = this.readyGarrisonCount();
+      const more = rest > 1 ? ` · ほか${rest - 1}体（「次の中身」で切替）` : '';
+      return `${name} を搬出 · 出す先のヘクスをタップ${more}`;
+    }
 
     const selection = this.selection;
     const unit =
@@ -730,8 +867,8 @@ export class App {
   }
 
   /**
-   * 施設の中身。**キューの内容と次の出現ターンは敵味方を問わずいつでも読める**（第4.6章）。
-   * 「3ターン後にここへ敵戦車が出る」という読みを成立させるための表示。
+   * 施設の中身。**敵味方を問わずいつでも読める**（第4.6章）。
+   * 「あの工場には戦車が眠っている」という読みを成立させるための表示。
    */
   private describeFacility(hex: Hex): string[] {
     const facility = facilityAt(this.state, hex);
@@ -740,23 +877,23 @@ export class App {
     const owner = facility.owner === null ? '中立' : this.factionName(facility.owner);
     const parts = [`${this.facilityName(facility.kind)}: ${owner}`];
 
-    if (facility.queue.length === 0) {
+    if (facility.garrison.length === 0) {
       parts.push('中身: 空');
       return parts;
     }
 
-    // 工場は「中に何が入っているか」がすべて。生産設備ではないので、
-    // 出し切ったら空になる（第4.6章「キューが尽きたらそれ以上は出ない」）
-    const stock = facility.queue.map((type) => unitDef(this.data, type).name);
-    parts.push(`中身: ${stock.join('・')}（残り${stock.length}）`);
+    // 施設は生産設備ではなく格納庫。出し切れば空になり、それ以上は出ない
+    const stock = facility.garrison.map((stored) => {
+      const name = unitDef(this.data, stored.type).name;
+      return stored.exp > 0 ? `${name}(熟練${stored.exp})` : name;
+    });
+    parts.push(`中身: ${stock.join('・')}（${stock.length}体）`);
 
-    const head = stock[0] ?? '';
-    if (facility.nextSpawnTurn === null) {
-      parts.push(`占領すると ${head} から順に搬出`);
-    } else {
-      const remaining = Math.max(0, facility.nextSpawnTurn - this.state.turn);
-      const when = remaining === 0 ? '次の自軍ターン' : `あと${remaining}ターン`;
-      parts.push(`次の搬出 ${head}（${when}）`);
+    if (facility.owner === null) {
+      parts.push('占領すれば搬出できる');
+    } else if (facility.owner === this.state.activeFaction) {
+      const ready = facility.garrison.filter((stored) => !stored.hasActed).length;
+      parts.push(ready > 0 ? `${ready}体を搬出できる` : 'このターンは搬出済み');
     }
     return parts;
   }
@@ -828,7 +965,7 @@ export class App {
     for (const facility of this.state.facilities) {
       const key = hexKey(facility.hex);
       facilityOwners.set(key, facility.owner);
-      if (facility.queue.length > 0) facilityStock.set(key, facility.queue.length);
+      if (facility.garrison.length > 0) facilityStock.set(key, facility.garrison.length);
     }
 
     const preview = selection?.preview ?? null;
@@ -840,8 +977,9 @@ export class App {
     const scene: RenderScene = {
       units,
       hovered: this.hovered,
-      selected,
-      reachable: selection?.stoppable ?? null,
+      selected: this.deploying?.facilityHex ?? selected,
+      // 搬出モードでは「出せるヘクス」を、移動可能ヘクスと同じ敷き色で見せる
+      reachable: this.deploying?.hexes ?? selection?.stoppable ?? null,
       targets: targetHexes.size > 0 ? targetHexes : null,
       path: preview?.kind === 'move' ? preview.path : null,
       focus,

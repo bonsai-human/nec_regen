@@ -42,7 +42,7 @@ const MAP_KEYS = [
   'designNote',
 ] as const;
 
-const FACILITY_ENTRY_KEYS = ['hex', 'kind', 'owner', 'queue', 'interval'] as const;
+const FACILITY_ENTRY_KEYS = ['hex', 'kind', 'owner', 'garrison'] as const;
 const UNIT_ENTRY_KEYS = ['hex', 'type', 'owner', 'strength'] as const;
 
 const MAX_DIMENSION = 100;
@@ -236,18 +236,11 @@ function parseFacilities(v: Validator, raw: unknown, ctx: PlacementContext): Fac
 
     const pair = parseHexPair(v, `${path}.hex`, record['hex']);
     const kind = v.enum<FacilityKind>(`${path}.kind`, record['kind'], FACILITY_KINDS);
-    const interval = v.integer(`${path}.interval`, record['interval'], 0, 20);
     const owner =
       record['owner'] === null ? null : v.enum(`${path}.owner`, record['owner'], ctx.factions);
-    const queue = parseQueue(v, `${path}.queue`, record['queue'], ctx.context);
+    const garrison = parseGarrison(v, `${path}.garrison`, record['garrison'], ctx.context);
 
-    if (
-      pair === undefined ||
-      kind === undefined ||
-      interval === undefined ||
-      owner === undefined ||
-      queue === undefined
-    ) {
+    if (pair === undefined || kind === undefined || owner === undefined || garrison === undefined) {
       continue;
     }
 
@@ -270,18 +263,13 @@ function parseFacilities(v: Validator, raw: unknown, ctx: PlacementContext): Fac
       continue;
     }
 
-    if (queue.length > 0 && interval === 0) {
-      v.fail(`${path}.interval`, '増援キューがある施設には1以上の出現間隔が必要です');
-      continue;
-    }
-
-    facilities.push({ hex: toAxial({ col: pair[0], row: pair[1] }), kind, owner, queue, interval });
+    facilities.push({ hex: toAxial({ col: pair[0], row: pair[1] }), kind, owner, garrison });
   }
 
   return facilities;
 }
 
-function parseQueue(
+function parseGarrison(
   v: Validator,
   path: string,
   raw: unknown,
@@ -392,7 +380,7 @@ function checkSpawnRoom(
   },
 ): void {
   for (const [index, facility] of facilities.entries()) {
-    if (facility.queue.length === 0) continue;
+    if (facility.garrison.length === 0) continue;
 
     const around = neighbors(facility.hex)
       .map((hex) => offsetOf(hex))
@@ -400,13 +388,13 @@ function checkSpawnRoom(
       .map(([col, row]) => board.terrainAt(col, row))
       .filter((terrain): terrain is TerrainDef => terrain !== undefined);
 
-    for (const [queueIndex, type] of facility.queue.entries()) {
+    for (const [slot, type] of facility.garrison.entries()) {
       const def = context.units.get(type);
       if (def === undefined) continue;
       if (!around.some((terrain) => canOccupy(def, terrain))) {
         v.fail(
-          `map.facilities[${index}].queue[${queueIndex}]`,
-          `${def.name} が出現できる隣接ヘクスがありません`,
+          `map.facilities[${index}].garrison[${slot}]`,
+          `${def.name} を搬出できる隣接ヘクスがありません`,
         );
       }
     }
@@ -451,7 +439,7 @@ function checkSubmarineHasAnswer(
   }
   for (const facility of facilities) {
     if (facility.owner === null) continue;
-    for (const type of facility.queue) {
+    for (const type of facility.garrison) {
       const def = context.units.get(type);
       if (def !== undefined) byFaction.get(facility.owner)?.push(def);
     }
