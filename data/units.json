@@ -564,7 +564,7 @@
     "attackDuringMove": false,
     "noCounter": false,
     "canCapture": false,
-    "canDetectSub": false,
+    "canDetectSub": true,
     "suppressSupport": false,
     "reloadTurns": 0,
     "cargo": { "capacity": 0, "allow": {} },

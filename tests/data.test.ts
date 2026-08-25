@@ -41,9 +41,12 @@ describe('units.json', () => {
     }
   });
 
-  it('潜水艦を攻撃できるのは駆逐艦だけ（第4.5章）', () => {
+  it('潜水艦を攻撃できるのは駆逐艦と潜水艦だけ（第4.5章）', () => {
     const detectors = [...units.values()].filter((def) => def.canDetectSub).map((def) => def.id);
-    expect(detectors).toEqual(['destroyer']);
+    expect(detectors.sort()).toEqual(['destroyer', 'submarine']);
+    // 潜水艦同士は撃ち合える（相性 △）
+    expect(units.get('submarine')?.matchup.sub).toBe(0.85);
+    expect(units.get('destroyer')?.matchup.sub).toBe(1.15);
   });
 
   it('攻撃後に移動できるのはバギー系だけ（第5.1章）', () => {
